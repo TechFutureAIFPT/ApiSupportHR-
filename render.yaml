@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: backendsupporthr
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: APP_NAME
+        value: SupportHR Backend
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
+      - key: GEMINI_EMBEDDING_MODEL
+        value: text-embedding-004
+      - key: GEMINI_API_KEY_1
+        sync: false
+      - key: GEMINI_API_KEY_2
+        sync: false
