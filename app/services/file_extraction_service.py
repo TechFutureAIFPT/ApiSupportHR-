@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+import base64
+from io import BytesIO
+from typing import Literal
+
+import fitz
+from docx import Document
+
+from app.core.config import get_settings
+from app.services.gemini_service import generate_content
+
+
+FILE_SIZE_LIMIT_MB = 15
+MIN_PDF_TEXT_LENGTH = 200
+MAX_OCR_PAGES = 3
+PDF_RENDER_SCALE = 2.2
+GEMINI_VISION_MODEL = "gemini-1.5-flash"
+
+
+def _normalize_text(text: str) -> str:
+    return (
+        text.replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\t", " ")
+        .replace("\u00a0", " ")
+        .strip()
+    )
+
+
+def _correct_ocr_errors(text: str) -> str:
+    replacements = [
+        (" rn ", " m "),
+        ("0", "0"),
+    ]
+    cleaned = text
+    for source, target in replacements:
+        cleaned = cleaned.replace(source, target)
+    return " ".join(cleaned.split())
+
+
+def _is_text_sufficient(text: str) -> bool:
+    meaningful = "".join(ch for ch in text if ch.isalnum() or ch.isspace()).strip()
+    return len(meaningful) >= MIN_PDF_TEXT_LENGTH
+
+
+def _build_vision_prompt(document_type: Literal["cv", "jd"]) -> str:
+    base = [
+        "You are a high-accuracy OCR assistant for Vietnamese and English hiring documents.",
+        "Extract all visible text exactly.",
+        "Keep line breaks, bullets, numbering, and table-like structure when possible.",
+        "Fix obvious OCR issues only when the intended text is clear.",
+        "Return plain text only without commentary.",
+    ]
+    detail = (
+        "Document type: Job Description. Prioritize title, requirements, skills, education, benefits, salary, and location."
+        if document_type == "jd"
+        else "Document type: Candidate CV. Prioritize name, email, phone, address, work history, education, skills, projects, and achievements."
+    )
+    return "\n".join(base + ["", detail])
+
+
+def _ocr_image_bytes(image_bytes: bytes, document_type: Literal["cv", "jd"]) -> str:
+    settings = get_settings()
+    response = generate_content(
+        GEMINI_VISION_MODEL or settings.gemini_default_model,
+        [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "inlineData": {
+                            "data": base64.b64encode(image_bytes).decode("utf-8"),
+                            "mimeType": "image/png",
+                        }
+                    },
+                    {"text": _build_vision_prompt(document_type)},
+                ],
+            }
+        ],
+        {
+            "temperature": 0,
+            "topP": 0.05,
+            "topK": 1,
+            "maxOutputTokens": 8192,
+            "responseMimeType": "text/plain",
+        },
+    )
+    return response.strip()
+
+
+def _extract_text_from_pdf(file_bytes: bytes, force_ocr: bool, document_type: Literal["cv", "jd"]) -> str:
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    try:
+        text_layer = "\n".join(page.get_text("text") for page in doc)
+        if not force_ocr and _is_text_sufficient(text_layer):
+            return text_layer
+
+        pages = min(MAX_OCR_PAGES, doc.page_count)
+        ocr_parts: list[str] = []
+        for index in range(pages):
+            page = doc.load_page(index)
+            pix = page.get_pixmap(matrix=fitz.Matrix(PDF_RENDER_SCALE, PDF_RENDER_SCALE), alpha=False)
+            ocr_text = _ocr_image_bytes(pix.tobytes("png"), document_type)
+            if ocr_text:
+                ocr_parts.append(ocr_text)
+
+        combined_ocr = "\n\n".join(part for part in ocr_parts if part.strip())
+        if combined_ocr.strip():
+            return combined_ocr
+        return text_layer
+    finally:
+        doc.close()
+
+
+def _extract_text_from_docx(file_bytes: bytes) -> str:
+    document = Document(BytesIO(file_bytes))
+    paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+
+    table_lines: list[str] = []
+    for table in document.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+            if cells:
+                table_lines.append(" | ".join(cells))
+
+    return "\n".join(paragraphs + table_lines)
+
+
+def _decode_plain_text(file_bytes: bytes) -> str:
+    for encoding in ("utf-8", "utf-8-sig", "latin-1"):
+        try:
+            return file_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return file_bytes.decode("utf-8", errors="ignore")
+
+
+def extract_text_from_upload(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+    force_ocr: bool = False,
+    document_type: str | None = None,
+) -> str:
+    if len(file_bytes) > FILE_SIZE_LIMIT_MB * 1024 * 1024:
+        raise ValueError(f"File is too large. Maximum size is {FILE_SIZE_LIMIT_MB}MB.")
+
+    name_lower = filename.lower()
+    doc_type: Literal["cv", "jd"] = "jd" if document_type == "jd" else "cv"
+
+    if content_type == "application/pdf" or name_lower.endswith(".pdf"):
+        raw_text = _extract_text_from_pdf(file_bytes, force_ocr, doc_type)
+    elif (
+        content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        or name_lower.endswith(".docx")
+    ):
+        raw_text = _extract_text_from_docx(file_bytes)
+    elif content_type.startswith("image/"):
+        raw_text = _ocr_image_bytes(file_bytes, doc_type)
+    elif content_type == "text/plain" or name_lower.endswith(".txt"):
+        raw_text = _decode_plain_text(file_bytes)
+    else:
+        raise ValueError(f"Unsupported file format: {filename}")
+
+    normalized = _normalize_text(_correct_ocr_errors(raw_text))
+    if not normalized:
+        raise ValueError(f"Could not extract text from file: {filename}")
+    return normalized
