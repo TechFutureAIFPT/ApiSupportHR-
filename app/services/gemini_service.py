@@ -45,6 +45,14 @@ def _fallback_models(model: str) -> Iterable[str]:
         yield "gemini-flash-latest"
 
 
+def _fallback_embedding_models(model: str) -> Iterable[str]:
+    yield model
+    if model in {"text-embedding-004", "models/text-embedding-004"}:
+        yield "gemini-embedding-001"
+    if model != "gemini-embedding-001":
+        yield "gemini-embedding-001"
+
+
 def generate_content(model: str, contents: Any, config: Any = None) -> str:
     keys = _get_keys()
     last_error: Exception | None = None
@@ -76,23 +84,24 @@ def embed_text(text: str, model: str | None = None) -> List[float]:
     keys = _get_keys()
     last_error: Exception | None = None
 
-    for index, key in enumerate(keys, start=1):
-        try:
-            genai_legacy.configure(api_key=key)
-            result = genai_legacy.embed_content(
-                model=target_model,
-                content=text,
-                task_type="semantic_similarity",
-            )
-            vector = result.get("embedding", [])
-            if not vector:
-                raise ValueError("Embedding API returned an empty vector")
-            return [float(value) for value in vector]
-        except Exception as error:  # pragma: no cover - network/provider path
-            last_error = error
-            if _is_invalid_key_error(error):
-                print(f"[Gemini Embed] Key {index}/{len(keys)} invalid or revoked.")
-            else:
-                print(f"[Gemini Embed] Key {index} failed: {error}")
+    for target_embedding_model in _fallback_embedding_models(target_model):
+        for index, key in enumerate(keys, start=1):
+            try:
+                genai_legacy.configure(api_key=key)
+                result = genai_legacy.embed_content(
+                    model=target_embedding_model,
+                    content=text,
+                    task_type="semantic_similarity",
+                )
+                vector = result.get("embedding", [])
+                if not vector:
+                    raise ValueError("Embedding API returned an empty vector")
+                return [float(value) for value in vector]
+            except Exception as error:  # pragma: no cover - network/provider path
+                last_error = error
+                if _is_invalid_key_error(error):
+                    print(f"[Gemini Embed] Key {index}/{len(keys)} invalid or revoked.")
+                else:
+                    print(f"[Gemini Embed] Model {target_embedding_model} with key {index} failed: {error}")
 
     raise HTTPException(status_code=500, detail=str(last_error or "All Gemini embedding keys failed on backend"))
