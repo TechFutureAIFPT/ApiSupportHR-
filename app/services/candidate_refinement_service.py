@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from app.core.config import get_settings
 from app.services.gemini_service import generate_content

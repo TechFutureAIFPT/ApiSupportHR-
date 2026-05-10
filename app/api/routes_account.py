@@ -1,0 +1,285 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Query
+
+from app.api.deps import get_current_user
+from app.schemas.account import (
+    AnalysisRunDataRequest,
+    AuthenticatedUser,
+    CacheSyncRequest,
+    ChatbotMessagesRequest,
+    ChatbotSessionCreateRequest,
+    HistorySaveRequest,
+    LocalDataMigrationRequest,
+    UploadedFileCreateRequest,
+    UploadedFilesBatchRequest,
+    UserAvatarUpdateRequest,
+    UserCvHistoryCreateRequest,
+    UserJDTemplateCreateRequest,
+    UserProfileUpsertRequest,
+)
+from app.services.account import (
+    cache_service,
+    chatbot_service,
+    history_service,
+    profile_service,
+    template_service,
+    uploaded_file_service,
+)
+
+
+router = APIRouter(prefix="/api/account", tags=["account"])
+
+
+@router.get("/profile")
+def get_profile(current_user: AuthenticatedUser = Depends(get_current_user)):
+    return profile_service.get_user_profile(current_user)
+
+
+@router.put("/profile")
+def upsert_profile(payload: UserProfileUpsertRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return profile_service.upsert_user_profile(
+        current_user,
+        email=payload.email,
+        display_name=payload.displayName,
+        avatar=payload.avatar,
+        provider=payload.provider,
+    )
+
+
+@router.patch("/profile/avatar")
+def update_profile_avatar(payload: UserAvatarUpdateRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return profile_service.update_user_avatar(current_user, payload.avatar)
+
+
+@router.post("/profile/cv-history")
+def create_profile_cv_history(payload: UserCvHistoryCreateRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {
+        "id": profile_service.save_cv_history(
+            current_user,
+            email=payload.email or current_user.email,
+            jd_text=payload.jdText,
+            jd_title=payload.jdTitle,
+            cv_count=payload.cvCount,
+            results=payload.results,
+        )
+    }
+
+
+@router.get("/profile/cv-history")
+def list_profile_cv_history(
+    limit_count: int = Query(default=50, ge=1, le=500),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return profile_service.get_user_cv_history(current_user, limit_count=limit_count)
+
+
+@router.post("/profile/cv-history/cleanup")
+def cleanup_profile_cv_history(
+    keep_count: int = Query(default=100, ge=1, le=1000),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    profile_service.cleanup_profile_cv_history(current_user, keep_count=keep_count)
+    return {"ok": True}
+
+
+@router.post("/profile/migrate-local")
+def migrate_local_profile_data(payload: LocalDataMigrationRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return profile_service.migrate_local_data(
+        current_user,
+        avatar=payload.avatar,
+        history=[item.model_dump() for item in payload.history],
+    )
+
+
+@router.post("/sync/cache")
+def sync_cache_entry(payload: CacheSyncRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    cache_service.sync_cache_entry(
+        current_user,
+        cache_key=payload.cacheKey,
+        candidate_data=payload.candidateData,
+        jd_hash=payload.jdHash,
+        weights_hash=payload.weightsHash,
+        filters_hash=payload.filtersHash,
+        file_info=payload.fileInfo.model_dump(),
+    )
+    return {"ok": True}
+
+
+@router.get("/sync/cache/{cache_key}")
+def get_cache_entry(cache_key: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return cache_service.get_cache_entry(current_user, cache_key)
+
+
+@router.get("/sync/cache")
+def get_all_cache_entries(current_user: AuthenticatedUser = Depends(get_current_user)):
+    return cache_service.get_all_user_cache(current_user)
+
+
+@router.delete("/sync/cache")
+def clear_all_cache_entries(current_user: AuthenticatedUser = Depends(get_current_user)):
+    cache_service.clear_user_cache(current_user)
+    return {"ok": True}
+
+
+@router.post("/sync/history")
+def sync_history_entry(payload: AnalysisRunDataRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"id": history_service.sync_history_entry(current_user, payload.model_dump())}
+
+
+@router.get("/sync/history")
+def get_synced_history(
+    limit_count: int = Query(default=20, ge=1, le=200),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return history_service.get_synced_history(current_user, limit_count=limit_count)
+
+
+@router.get("/sync/stats")
+def get_sync_stats(current_user: AuthenticatedUser = Depends(get_current_user)):
+    return history_service.get_sync_stats(current_user)
+
+
+@router.post("/history")
+def save_history_session(payload: HistorySaveRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"id": history_service.save_history_session(current_user, payload.model_dump())}
+
+
+@router.get("/history")
+def fetch_recent_history(
+    limit_count: int = Query(default=20, ge=1, le=200),
+    user_email: str | None = None,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return history_service.fetch_recent_history(current_user, limit_count=limit_count, user_email=user_email)
+
+
+@router.post("/history/manual-snapshot")
+def save_manual_history_snapshot(payload: HistorySaveRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"id": history_service.save_manual_history_snapshot(current_user, payload.model_dump())}
+
+
+@router.get("/history/manual")
+def fetch_manual_history(
+    user_email: str | None = None,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return history_service.fetch_manual_history(current_user, user_email=user_email)
+
+
+@router.post("/uploaded-files")
+def save_uploaded_file(payload: UploadedFileCreateRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"id": uploaded_file_service.save_uploaded_file(current_user, payload.model_dump())}
+
+
+@router.post("/uploaded-files/batch")
+def save_uploaded_files(payload: UploadedFilesBatchRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"ids": uploaded_file_service.save_uploaded_files(current_user, [item.model_dump() for item in payload.files])}
+
+
+@router.get("/uploaded-files")
+def list_uploaded_files(
+    limit_count: int = Query(default=50, ge=1, le=500),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return uploaded_file_service.get_user_files(current_user, limit_count=limit_count)
+
+
+@router.get("/uploaded-files/by-type/{file_type}")
+def list_uploaded_files_by_type(
+    file_type: str,
+    limit_count: int = Query(default=50, ge=1, le=500),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return uploaded_file_service.get_user_files_by_type(current_user, file_type=file_type, limit_count=limit_count)
+
+
+@router.get("/uploaded-files/by-session/{session_id}")
+def list_uploaded_files_by_session(session_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return uploaded_file_service.get_files_by_session(current_user, session_id=session_id)
+
+
+@router.delete("/uploaded-files/{file_id}")
+def delete_uploaded_file(file_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"ok": uploaded_file_service.delete_file(current_user, file_id)}
+
+
+@router.post("/uploaded-files/{file_id}/touch")
+def touch_uploaded_file(file_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"ok": uploaded_file_service.touch_file(current_user, file_id)}
+
+
+@router.get("/uploaded-files/stats")
+def get_uploaded_file_stats(current_user: AuthenticatedUser = Depends(get_current_user)):
+    return uploaded_file_service.get_file_stats(current_user)
+
+
+@router.get("/jd-templates")
+def get_jd_templates(current_user: AuthenticatedUser = Depends(get_current_user)):
+    return template_service.get_user_templates(current_user)
+
+
+@router.post("/jd-templates")
+def create_jd_template(payload: UserJDTemplateCreateRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return template_service.create_template(current_user, payload.model_dump())
+
+
+@router.patch("/jd-templates/{template_id}")
+def update_jd_template(
+    template_id: str,
+    payload: UserJDTemplateCreateRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return {"ok": template_service.update_template(current_user, template_id, payload.model_dump())}
+
+
+@router.delete("/jd-templates/{template_id}")
+def delete_jd_template(template_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"ok": template_service.delete_template(current_user, template_id)}
+
+
+@router.post("/jd-templates/seed-defaults")
+def seed_jd_templates(current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"created": template_service.seed_default_templates_if_empty(current_user)}
+
+
+@router.post("/chatbot/sessions")
+def create_chatbot_session(payload: ChatbotSessionCreateRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"id": chatbot_service.create_chatbot_session(current_user, payload.jobPosition, payload.totalCandidates)}
+
+
+@router.post("/chatbot/sessions/{session_id}/messages")
+def add_chatbot_messages(
+    session_id: str,
+    payload: ChatbotMessagesRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return {"ok": chatbot_service.add_chatbot_messages(current_user, session_id, [item.model_dump() for item in payload.messages])}
+
+
+@router.get("/chatbot/sessions")
+def list_chatbot_sessions(
+    limit_count: int = Query(default=20, ge=1, le=200),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return chatbot_service.get_user_chatbot_sessions(current_user, limit_count=limit_count)
+
+
+@router.get("/chatbot/sessions/{session_id}")
+def get_chatbot_session(session_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return chatbot_service.get_chatbot_session(current_user, session_id)
+
+
+@router.get("/chatbot/recent")
+def find_recent_chatbot_session(job_position: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return chatbot_service.find_recent_chatbot_session(current_user, job_position)
+
+
+@router.delete("/chatbot/sessions/{session_id}")
+def delete_chatbot_session(session_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"ok": chatbot_service.delete_chatbot_session(current_user, session_id)}
+
+
+@router.get("/chatbot/stats")
+def get_chatbot_stats(current_user: AuthenticatedUser = Depends(get_current_user)):
+    return chatbot_service.get_chatbot_session_stats(current_user)

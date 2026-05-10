@@ -16,6 +16,21 @@ class Settings:
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
         self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
         self.gemini_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+        self.firebase_project_id = os.getenv("FIREBASE_PROJECT_ID", "")
+        self.firebase_client_email = os.getenv("FIREBASE_CLIENT_EMAIL", "")
+        self.firebase_private_key = os.getenv("FIREBASE_PRIVATE_KEY", "")
+        self.firebase_service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+        self.firebase_web_api_key = os.getenv("FIREBASE_WEB_API_KEY", "")
+        self.firebase_auth_domain = os.getenv("FIREBASE_AUTH_DOMAIN", "")
+        self.firebase_database_url = os.getenv("FIREBASE_DATABASE_URL", "")
+        self.firebase_storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET", "")
+        self.firebase_messaging_sender_id = os.getenv("FIREBASE_MESSAGING_SENDER_ID", "")
+        self.firebase_app_id = os.getenv("FIREBASE_APP_ID", "")
+        self.firebase_measurement_id = os.getenv("FIREBASE_MEASUREMENT_ID", "")
+        self.firebase_appcheck_site_key = os.getenv("FIREBASE_APPCHECK_SITE_KEY", "")
+        self.google_api_key = os.getenv("GOOGLE_API_KEY", "")
+        self.google_picker_api_key = os.getenv("GOOGLE_PICKER_API_KEY", "")
+        self.google_cloud_vision_api_key = os.getenv("GOOGLE_CLOUD_VISION_API_KEY", "")
 
     @property
     def gemini_api_keys(self) -> List[str]:
