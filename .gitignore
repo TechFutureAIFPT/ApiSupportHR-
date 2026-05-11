@@ -1,6 +1,8 @@
 .env
 .env.*
 .env.example
+admin/
+*.json
 
 .venv
 .venv-test
