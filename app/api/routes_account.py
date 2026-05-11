@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import get_current_user
 from app.schemas.account import (
@@ -9,6 +9,13 @@ from app.schemas.account import (
     CacheSyncRequest,
     ChatbotMessagesRequest,
     ChatbotSessionCreateRequest,
+    GoogleDriveConnectionStatusResponse,
+    GoogleDriveFilesResponse,
+    GoogleDriveImportRequest,
+    GoogleDriveImportResponse,
+    GoogleDriveOAuthExchangeRequest,
+    GoogleDriveOAuthUrlRequest,
+    GoogleDriveOAuthUrlResponse,
     HistorySaveRequest,
     LocalDataMigrationRequest,
     UploadedFileCreateRequest,
@@ -21,6 +28,7 @@ from app.schemas.account import (
 from app.services.account import (
     cache_service,
     chatbot_service,
+    google_drive_service,
     history_service,
     profile_service,
     template_service,
@@ -29,6 +37,16 @@ from app.services.account import (
 
 
 router = APIRouter(prefix="/api/account", tags=["account"])
+
+
+def _raise_google_drive_http_error(error: Exception) -> None:
+    if isinstance(error, google_drive_service.GoogleDriveConfigError):
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+    if isinstance(error, google_drive_service.GoogleDriveValidationError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    if isinstance(error, google_drive_service.GoogleDriveProviderError):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
 
 
 @router.get("/profile")
@@ -283,3 +301,77 @@ def delete_chatbot_session(session_id: str, current_user: AuthenticatedUser = De
 @router.get("/chatbot/stats")
 def get_chatbot_stats(current_user: AuthenticatedUser = Depends(get_current_user)):
     return chatbot_service.get_chatbot_session_stats(current_user)
+
+
+@router.get("/google-drive/status", response_model=GoogleDriveConnectionStatusResponse)
+def get_google_drive_status(current_user: AuthenticatedUser = Depends(get_current_user)):
+    try:
+        return google_drive_service.get_connection_status(current_user)
+    except Exception as error:
+        _raise_google_drive_http_error(error)
+
+
+@router.post("/google-drive/oauth-url", response_model=GoogleDriveOAuthUrlResponse)
+def create_google_drive_oauth_url(
+    payload: GoogleDriveOAuthUrlRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        return google_drive_service.create_oauth_url(current_user, payload.redirectUri)
+    except Exception as error:
+        _raise_google_drive_http_error(error)
+
+
+@router.post("/google-drive/exchange-code", response_model=GoogleDriveConnectionStatusResponse)
+def exchange_google_drive_code(
+    payload: GoogleDriveOAuthExchangeRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        return google_drive_service.exchange_code(
+            current_user,
+            code=payload.code,
+            state=payload.state,
+            redirect_uri=payload.redirectUri,
+        )
+    except Exception as error:
+        _raise_google_drive_http_error(error)
+
+
+@router.delete("/google-drive/connection")
+def disconnect_google_drive(current_user: AuthenticatedUser = Depends(get_current_user)):
+    try:
+        return {"ok": google_drive_service.disconnect(current_user)}
+    except Exception as error:
+        _raise_google_drive_http_error(error)
+
+
+@router.get("/google-drive/files", response_model=GoogleDriveFilesResponse)
+def list_google_drive_files(
+    search: str | None = None,
+    folder_id: str | None = None,
+    page_token: str | None = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        return google_drive_service.list_files(
+            current_user,
+            search=search,
+            folder_id=folder_id,
+            page_size=page_size,
+            page_token=page_token,
+        )
+    except Exception as error:
+        _raise_google_drive_http_error(error)
+
+
+@router.post("/google-drive/import", response_model=GoogleDriveImportResponse)
+def import_google_drive_file(
+    payload: GoogleDriveImportRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        return google_drive_service.import_file_from_drive(current_user, payload.model_dump())
+    except Exception as error:
+        _raise_google_drive_http_error(error)

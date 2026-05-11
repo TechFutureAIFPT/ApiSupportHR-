@@ -15,6 +15,8 @@ UPLOADED_FILES_COLLECTION = "uploadedFiles"
 JD_TEMPLATES_COLLECTION = "userJDTemplates"
 CHATBOT_SESSIONS_COLLECTION = "chatbotSessions"
 MANUAL_COLLECTION_ID = "CLdl7JGuaOGIuijiDZeG"
+GOOGLE_DRIVE_CONNECTIONS_COLLECTION = "googleDriveConnections"
+GOOGLE_DRIVE_OAUTH_STATES_COLLECTION = "googleDriveOAuthStates"
 
 
 def db():
@@ -57,6 +59,14 @@ def manual_history():
     return db().collection(MANUAL_COLLECTION_ID)
 
 
+def google_drive_connections():
+    return db().collection(GOOGLE_DRIVE_CONNECTIONS_COLLECTION)
+
+
+def google_drive_oauth_states():
+    return db().collection(GOOGLE_DRIVE_OAUTH_STATES_COLLECTION)
+
+
 def create_document(collection_ref):
     return collection_ref.document()
 
@@ -67,4 +77,3 @@ def get_document(collection_ref, document_id: str):
 
 def set_document(collection_ref, document_id: str, payload: dict[str, Any], merge: bool = False):
     collection_ref.document(document_id).set(payload, merge=merge)
-

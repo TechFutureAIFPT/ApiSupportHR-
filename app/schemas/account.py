@@ -115,3 +115,78 @@ class ChatbotSessionCreateRequest(BaseModel):
 class ChatbotMessagesRequest(BaseModel):
     messages: list[ChatMessageRecordRequest] = Field(default_factory=list)
 
+
+class GoogleDriveOAuthUrlRequest(BaseModel):
+    redirectUri: str | None = None
+
+
+class GoogleDriveOAuthUrlResponse(BaseModel):
+    authUrl: str
+    state: str
+    redirectUri: str
+    scopes: list[str] = Field(default_factory=list)
+
+
+class GoogleDriveOAuthExchangeRequest(BaseModel):
+    code: str
+    state: str
+    redirectUri: str | None = None
+
+
+class GoogleDriveConnectionStatusResponse(BaseModel):
+    connected: bool = False
+    email: str | None = None
+    displayName: str | None = None
+    photoUrl: str | None = None
+    scopes: list[str] = Field(default_factory=list)
+    connectedAt: int | None = None
+    updatedAt: int | None = None
+    expiresAt: int | None = None
+    driveUserId: str | None = None
+
+
+class GoogleDriveFileOwner(BaseModel):
+    displayName: str = ""
+    emailAddress: str = ""
+
+
+class GoogleDriveFileItem(BaseModel):
+    id: str
+    name: str
+    mimeType: str
+    size: int | None = None
+    modifiedTime: str | None = None
+    iconLink: str | None = None
+    webViewLink: str | None = None
+    parents: list[str] = Field(default_factory=list)
+    owners: list[GoogleDriveFileOwner] = Field(default_factory=list)
+    isGoogleWorkspaceFile: bool = False
+
+
+class GoogleDriveFilesResponse(BaseModel):
+    files: list[GoogleDriveFileItem] = Field(default_factory=list)
+    nextPageToken: str | None = None
+
+
+class GoogleDriveImportRequest(BaseModel):
+    fileId: str
+    fileType: Literal["cv", "jd"] = "cv"
+    forceOcr: bool = False
+    analysisSessionId: str | None = None
+    candidateName: str | None = None
+    jobPosition: str | None = None
+    persistUploadedFile: bool = True
+
+
+class GoogleDriveImportResponse(BaseModel):
+    fileId: str
+    fileName: str
+    mimeType: str
+    sourceMimeType: str
+    fileSize: int
+    extractedText: str
+    ocrMethod: str
+    processingTimeMs: int
+    savedUploadedFileId: str | None = None
+    webViewLink: str | None = None
+    driveFile: GoogleDriveFileItem | None = None

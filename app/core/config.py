@@ -36,6 +36,23 @@ class Settings:
         self.google_api_key = os.getenv("GOOGLE_API_KEY", "")
         self.google_picker_api_key = os.getenv("GOOGLE_PICKER_API_KEY", "")
         self.google_cloud_vision_api_key = os.getenv("GOOGLE_CLOUD_VISION_API_KEY", "")
+        self.google_oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+        self.google_oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+        self.google_oauth_redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "")
+        raw_drive_origins = os.getenv("GOOGLE_DRIVE_ALLOWED_ORIGINS", "").strip()
+        default_drive_origins = [
+            self.frontend_origin,
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+        if raw_drive_origins:
+            self.google_drive_allowed_origins = [
+                value.strip()
+                for value in raw_drive_origins.split(",")
+                if value.strip()
+            ]
+        else:
+            self.google_drive_allowed_origins = default_drive_origins
 
     @property
     def gemini_api_keys(self) -> List[str]:

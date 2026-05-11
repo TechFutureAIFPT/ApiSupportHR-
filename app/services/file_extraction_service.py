@@ -158,7 +158,7 @@ def extract_text_from_upload(
         raw_text = _extract_text_from_docx(file_bytes)
     elif content_type.startswith("image/"):
         raw_text = _ocr_image_bytes(file_bytes, doc_type)
-    elif content_type == "text/plain" or name_lower.endswith(".txt"):
+    elif content_type in {"text/plain", "text/csv", "application/csv"} or name_lower.endswith((".txt", ".csv")):
         raw_text = _decode_plain_text(file_bytes)
     else:
         raise ValueError(f"Unsupported file format: {filename}")
