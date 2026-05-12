@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict
 
 from app.core.config import get_settings
+from app.prompts import render_prompt
 from app.services.gemini_service import generate_content
 
 
@@ -24,32 +25,13 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 def refine_cv_profile(cv_text: str, current_education: str | None, current_name: str | None) -> Dict[str, Any]:
     settings = get_settings()
 
-    education_prompt = f"""
-Ban la chuyen gia tham dinh ho so hoc van.
-Nhiem vu: phan tich van ban CV va xac thuc/trich xuat lai thong tin hoc van.
-
-QUY TAC:
-1. Phat hien loi template nhu TopCV, VietnamWorks, JobStreet trong ten truong.
-2. Tim ten truong thuc su trong muc Education.
-3. Dinh dang chuan: "Ten truong - Bac hoc - Chuyen nganh - Thoi gian".
-4. validationNote phai la mot trong: Hop le, Can kiem tra, Khoa hoc/Chung chi, Khong hop le.
-5. warnings la array string.
-
-Tra ve JSON only:
-{{
-  "standardizedEducation": "string",
-  "validationNote": "string",
-  "warnings": ["string"]
-}}
-
-CV:
----
-{cv_text[:4000]}
----
-
-Dang kiem tra:
-{current_education or 'Chua co'}
-"""
+    education_prompt = render_prompt(
+        "candidate_refinement/education_validation",
+        context={
+            "cv_text": cv_text[:4000],
+            "current_education": current_education or "Chua co",
+        },
+    )
     education_text = generate_content(
         settings.gemini_default_model,
         education_prompt,
@@ -57,20 +39,13 @@ Dang kiem tra:
     )
     education_data = _extract_json_object(education_text)
 
-    name_prompt = f"""
-Ban la chuyen gia xu ly van ban CV, dac biet voi CV bi loi OCR.
-Nhiem vu: khoi phuc ten ung vien day du, loai bo ky tu rac va viet hoa dung.
-
-Chi tra ve mot chuoi ten duy nhat. Neu khong tim thay thi tra ve null.
-
-CV:
----
-{cv_text[:2000]}
----
-
-Ten hien tai:
-{current_name or ''}
-"""
+    name_prompt = render_prompt(
+        "candidate_refinement/refine_name",
+        context={
+            "cv_text": cv_text[:2000],
+            "current_name": current_name or "",
+        },
+    )
     refined_name_text = generate_content(
         settings.gemini_default_model,
         name_prompt,

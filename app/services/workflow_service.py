@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List
 
 from app.core.config import get_settings
+from app.prompts import render_prompt
 from app.services.gemini_service import generate_content
 
 
@@ -32,21 +33,10 @@ def _format_jd_sections(data: Dict[str, Any]) -> str:
 
 
 def structure_jd(raw_text: str) -> str:
-    prompt = f"""
-You clean and structure a raw Vietnamese job description.
-
-Rules:
-1. Keep only 3 sections: MucDichCongViec, MoTaCongViec, YeuCauCongViec.
-2. Remove company intro, benefits, salary, contact info, and unrelated noise.
-3. Fix obvious OCR and formatting issues but keep the original meaning.
-4. Return JSON only with keys: MucDichCongViec, MoTaCongViec, YeuCauCongViec.
-5. Use empty strings if a section is missing.
-
-Raw JD:
----
-{raw_text[:4000]}
----
-"""
+    prompt = render_prompt(
+        "workflow/jd_structure",
+        context={"raw_text": raw_text[:4000]},
+    )
     settings = get_settings()
     response_text = generate_content(
         settings.gemini_default_model,
@@ -61,20 +51,10 @@ Raw JD:
 
 
 def extract_job_position(jd_text: str) -> str:
-    prompt = f"""
-Extract the exact job title from this Vietnamese job description.
-
-Rules:
-1. Return only the job title.
-2. Remove labels like Job Title, Position, Chuc danh, Vi tri.
-3. Keep the answer between 3 and 80 characters.
-4. If unsure, infer from the main JD content.
-
-JD:
----
-{jd_text[:2000]}
----
-"""
+    prompt = render_prompt(
+        "workflow/extract_job_position",
+        context={"jd_text": jd_text[:2000]},
+    )
     settings = get_settings()
     text = generate_content(settings.gemini_default_model, prompt, {"temperature": 0.3, "top_p": 0.7, "top_k": 10})
     position = re.sub(r'^["\'`]+|["\'`]+$', "", text.strip())
@@ -140,37 +120,10 @@ def _convert_language_level_to_cefr(text: str) -> str | None:
 
 
 def extract_hard_filters(jd_text: str) -> Dict[str, str]:
-    prompt = f"""
-Ban la chuyen gia phan tich JD thong minh.
-Hay trich xuat va CHUAN HOA cac tieu chi loc tu JD.
-
-Tra ve JSON only voi cac key:
-- location
-- minExp
-- seniority
-- education
-- language
-- languageLevel
-- certificates
-- workFormat
-- contractType
-- industry
-
-Quy tac chuan hoa:
-1. location chi duoc la: Ha Noi, Hai Phong, Da Nang, Thanh pho Ho Chi Minh, Remote
-2. minExp chi duoc la: 1, 2, 3, 5
-3. seniority chi duoc la: Intern, Junior, Mid-level, Senior, Lead
-4. education chi duoc la: High School, Associate, Bachelor, Master, PhD
-5. languageLevel chi duoc la: B1, B2, C1, C2
-6. workFormat chi duoc la: Onsite, Hybrid, Remote
-7. contractType chi duoc la: Full-time, Part-time, Intern, Contract
-8. Neu khong co thong tin thi bo trong bang chuoi rong.
-
-JD:
----
-{jd_text[:3000]}
----
-"""
+    prompt = render_prompt(
+        "workflow/extract_hard_filters",
+        context={"jd_text": jd_text[:3000]},
+    )
     settings = get_settings()
     response_text = generate_content(
         settings.gemini_default_model,
@@ -307,13 +260,13 @@ JD:
 
 
 def _candidate_strength_weakness_areas(candidate: Dict[str, Any]) -> tuple[List[str], List[str]]:
-    details = (((candidate.get("analysis") or {}).get("Chi tiết")) or ((candidate.get("analysis") or {}).get("Chi tiáº¿t")) or [])
+    details = (((candidate.get("analysis") or {}).get("Chi tiáº¿t")) or ((candidate.get("analysis") or {}).get("Chi tiÃ¡ÂºÂ¿t")) or [])
     strengths: List[str] = []
     weaknesses: List[str] = []
 
     for detail in details:
-        score_text = detail.get("Điểm") or detail.get("Äiá»ƒm") or ""
-        criterion = detail.get("Tiêu chí") or detail.get("TiÃªu chÃ­") or ""
+        score_text = detail.get("Äiá»ƒm") or detail.get("Ã„ÂiÃ¡Â»Æ’m") or ""
+        criterion = detail.get("TiÃªu chÃ­") or detail.get("TiÃƒÂªu chÃƒÂ­") or ""
         if "/" not in score_text or not criterion:
             continue
         try:
@@ -329,122 +282,65 @@ def _candidate_strength_weakness_areas(candidate: Dict[str, Any]) -> tuple[List[
 
 
 def _create_general_questions_prompt(analysis_data: Dict[str, Any], stats: Dict[str, Any]) -> str:
-    return f"""
-Create high-quality interview question sets in Vietnamese for HR.
-
-Return JSON only:
-{{
-  "questionSets": [
-    {{
-      "category": "string",
-      "icon": "fa-solid fa-briefcase",
-      "color": "text-blue-400",
-      "questions": ["string"]
-    }}
-  ]
-}}
-
-Use the real hiring data below.
-- Position: {stats.get("jobPosition", "")}
-- Location: {((analysis_data.get("job") or {}).get("locationRequirement", ""))}
-- Total candidates: {stats.get("totalCandidates", 0)}
-- Main industries: {", ".join(stats.get("industries", []))}
-- Main levels: {", ".join(stats.get("levels", []))}
-- Common weaknesses: {", ".join(stats.get("commonWeaknesses", []))}
-- Common skill gaps: {", ".join(stats.get("skillGaps", []))}
-
-Requirements:
-1. Create 4 to 5 groups.
-2. Each group should have 4 to 6 practical questions.
-3. Questions must reflect the real weaknesses and missing skills above.
-4. Keep the output concise and professional.
-"""
+    return render_prompt(
+        "workflow/interview_general",
+        context={
+            "job_position": stats.get("jobPosition", ""),
+            "location_requirement": ((analysis_data.get("job") or {}).get("locationRequirement", "")),
+            "total_candidates": stats.get("totalCandidates", 0),
+            "industries": ", ".join(stats.get("industries", [])),
+            "levels": ", ".join(stats.get("levels", [])),
+            "common_weaknesses": ", ".join(stats.get("commonWeaknesses", [])),
+            "skill_gaps": ", ".join(stats.get("skillGaps", [])),
+        },
+    )
 
 
 def _create_specific_questions_prompt(analysis_data: Dict[str, Any], stats: Dict[str, Any], candidate: Dict[str, Any]) -> str:
     analysis = candidate.get("analysis") or {}
     strengths, weaknesses = _candidate_strength_weakness_areas(candidate)
-    return f"""
-Create candidate-specific interview question sets in Vietnamese.
-
-Return JSON only:
-{{
-  "questionSets": [
-    {{
-      "category": "string",
-      "icon": "fa-solid fa-user-check",
-      "color": "text-purple-400",
-      "questions": ["string"]
-    }}
-  ]
-}}
-
-Hiring context:
-- Position: {stats.get("jobPosition", "")}
-- Location: {((analysis_data.get("job") or {}).get("locationRequirement", ""))}
-
-Candidate:
-- Name: {candidate.get("candidateName", "")}
-- Job title: {candidate.get("jobTitle", "")}
-- Industry: {candidate.get("industry", "")}
-- Level: {candidate.get("experienceLevel", "")}
-- Score: {analysis.get("Tá»•ng Ä‘iá»ƒm", analysis.get("Tổng điểm", 0))}
-- Rank: {analysis.get("Háº¡ng", analysis.get("Hạng", ""))}
-- Strengths: {", ".join(analysis.get("Äiá»ƒm máº¡nh CV", analysis.get("Điểm mạnh CV", [])))}
-- Weaknesses: {", ".join(analysis.get("Äiá»ƒm yáº¿u CV", analysis.get("Điểm yếu CV", [])))}
-- Strong areas: {", ".join(strengths)}
-- Weak areas: {", ".join(weaknesses)}
-
-Requirements:
-1. Create 4 to 5 groups.
-2. Each group should have 4 to 5 targeted questions.
-3. Questions must validate the strengths and probe the weaknesses.
-4. Avoid generic template wording.
-"""
+    return render_prompt(
+        "workflow/interview_specific",
+        context={
+            "job_position": stats.get("jobPosition", ""),
+            "location_requirement": ((analysis_data.get("job") or {}).get("locationRequirement", "")),
+            "candidate_name": candidate.get("candidateName", ""),
+            "candidate_job_title": candidate.get("jobTitle", ""),
+            "candidate_industry": candidate.get("industry", ""),
+            "candidate_level": candidate.get("experienceLevel", ""),
+            "candidate_score": analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m", analysis.get("Tá»•ng Ä‘iá»ƒm", 0)),
+            "candidate_rank": analysis.get("HÃ¡ÂºÂ¡ng", analysis.get("Háº¡ng", "")),
+            "candidate_strengths": ", ".join(analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV", analysis.get("Äiá»ƒm máº¡nh CV", []))),
+            "candidate_weaknesses": ", ".join(analysis.get("Ã„ÂiÃ¡Â»Æ’m yÃ¡ÂºÂ¿u CV", analysis.get("Äiá»ƒm yáº¿u CV", []))),
+            "strong_areas": ", ".join(strengths),
+            "weak_areas": ", ".join(weaknesses),
+        },
+    )
 
 
 def _create_comparative_questions_prompt(analysis_data: Dict[str, Any], stats: Dict[str, Any], candidates: List[Dict[str, Any]]) -> str:
     profile_lines = []
     for index, candidate in enumerate(candidates, start=1):
         analysis = candidate.get("analysis") or {}
-        strengths = ", ".join((analysis.get("Äiá»ƒm máº¡nh CV", analysis.get("Điểm mạnh CV", [])) or [])[:3])
-        weaknesses = ", ".join((analysis.get("Äiá»ƒm yáº¿u CV", analysis.get("Điểm yếu CV", [])) or [])[:2])
+        strengths = ", ".join((analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV", analysis.get("Äiá»ƒm máº¡nh CV", [])) or [])[:3])
+        weaknesses = ", ".join((analysis.get("Ã„ÂiÃ¡Â»Æ’m yÃ¡ÂºÂ¿u CV", analysis.get("Äiá»ƒm yáº¿u CV", [])) or [])[:2])
         profile_lines.append(
             f"{index}. {candidate.get('candidateName', '')} | "
-            f"Rank: {analysis.get('Háº¡ng', analysis.get('Hạng', ''))} | "
-            f"Score: {analysis.get('Tá»•ng Ä‘iá»ƒm', analysis.get('Tổng điểm', 0))} | "
+            f"Rank: {analysis.get('HÃ¡ÂºÂ¡ng', analysis.get('Háº¡ng', ''))} | "
+            f"Score: {analysis.get('TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m', analysis.get('Tá»•ng Ä‘iá»ƒm', 0))} | "
             f"Title: {candidate.get('jobTitle', '')} | "
             f"Level: {candidate.get('experienceLevel', '')} | "
             f"Strengths: {strengths} | Weaknesses: {weaknesses}"
         )
 
-    return f"""
-Create comparative interview question sets in Vietnamese for choosing the best candidate.
-
-Return JSON only:
-{{
-  "questionSets": [
-    {{
-      "category": "string",
-      "icon": "fa-solid fa-scale-balanced",
-      "color": "text-cyan-400",
-      "questions": ["string"]
-    }}
-  ]
-}}
-
-Hiring context:
-- Position: {stats.get("jobPosition", "")}
-- Location: {((analysis_data.get("job") or {}).get("locationRequirement", ""))}
-
-Candidates:
-{chr(10).join(profile_lines)}
-
-Requirements:
-1. Create 4 to 5 groups.
-2. Each group should have 4 to 5 comparison-focused questions.
-3. Questions should help HR distinguish technical skill, ownership, teamwork, and long-term fit.
-"""
+    return render_prompt(
+        "workflow/interview_comparative",
+        context={
+            "job_position": stats.get("jobPosition", ""),
+            "location_requirement": ((analysis_data.get("job") or {}).get("locationRequirement", "")),
+            "candidate_profiles": "\n".join(profile_lines),
+        },
+    )
 
 
 def generate_interview_questions(

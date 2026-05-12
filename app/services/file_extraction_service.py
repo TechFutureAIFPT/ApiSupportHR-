@@ -8,6 +8,7 @@ import fitz
 from docx import Document
 
 from app.core.config import get_settings
+from app.prompts import render_prompt
 from app.services.gemini_service import generate_content
 
 
@@ -45,19 +46,15 @@ def _is_text_sufficient(text: str) -> bool:
 
 
 def _build_vision_prompt(document_type: Literal["cv", "jd"]) -> str:
-    base = [
-        "You are a high-accuracy OCR assistant for Vietnamese and English hiring documents.",
-        "Extract all visible text exactly.",
-        "Keep line breaks, bullets, numbering, and table-like structure when possible.",
-        "Fix obvious OCR issues only when the intended text is clear.",
-        "Return plain text only without commentary.",
-    ]
-    detail = (
+    document_detail = (
         "Document type: Job Description. Prioritize title, requirements, skills, education, benefits, salary, and location."
         if document_type == "jd"
         else "Document type: Candidate CV. Prioritize name, email, phone, address, work history, education, skills, projects, and achievements."
     )
-    return "\n".join(base + ["", detail])
+    return render_prompt(
+        "file_extraction/ocr_document",
+        context={"document_detail": document_detail},
+    )
 
 
 def _ocr_image_bytes(image_bytes: bytes, document_type: Literal["cv", "jd"]) -> str:
