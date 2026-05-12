@@ -9,11 +9,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DEFAULT_WEB_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://www.supporthr-tf.com.vn",
+    "https://supporthr-tf.com.vn",
+]
+
 
 class Settings:
     def __init__(self) -> None:
         self.app_name = os.getenv("APP_NAME", "SupportHR Backend")
-        self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+        self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
         self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
         raw_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "").strip()
         if raw_embedding_model in {"", "text-embedding-004", "models/text-embedding-004"}:
@@ -40,17 +47,15 @@ class Settings:
         self.google_oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
         self.google_oauth_redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "")
         raw_drive_origins = os.getenv("GOOGLE_DRIVE_ALLOWED_ORIGINS", "").strip()
-        default_drive_origins = [
-            self.frontend_origin,
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ]
+        default_drive_origins = list(dict.fromkeys([self.frontend_origin, *DEFAULT_WEB_ORIGINS]))
         if raw_drive_origins:
-            self.google_drive_allowed_origins = [
-                value.strip()
-                for value in raw_drive_origins.split(",")
-                if value.strip()
-            ]
+            self.google_drive_allowed_origins = list(
+                dict.fromkeys(
+                    value.strip()
+                    for value in raw_drive_origins.split(",")
+                    if value.strip()
+                )
+            )
         else:
             self.google_drive_allowed_origins = default_drive_origins
 

@@ -12,6 +12,20 @@ services:
         value: SupportHR Backend
       - key: FRONTEND_ORIGIN
         sync: false
+      - key: GOOGLE_DRIVE_ALLOWED_ORIGINS
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REDIRECT_URI
+        sync: false
+      - key: GOOGLE_PICKER_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_CLOUD_VISION_API_KEY
+        sync: false
       - key: GEMINI_MODEL
         value: gemini-flash-latest
       - key: GEMINI_EMBEDDING_MODEL
