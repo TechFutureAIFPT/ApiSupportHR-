@@ -17,6 +17,7 @@ CHATBOT_SESSIONS_COLLECTION = "chatbotSessions"
 MANUAL_COLLECTION_ID = "CLdl7JGuaOGIuijiDZeG"
 GOOGLE_DRIVE_CONNECTIONS_COLLECTION = "googleDriveConnections"
 GOOGLE_DRIVE_OAUTH_STATES_COLLECTION = "googleDriveOAuthStates"
+ANALYSIS_FEEDBACK_COLLECTION = "analysisFeedback"
 
 
 def db():
@@ -65,6 +66,10 @@ def google_drive_connections():
 
 def google_drive_oauth_states():
     return db().collection(GOOGLE_DRIVE_OAUTH_STATES_COLLECTION)
+
+
+def analysis_feedback():
+    return db().collection(ANALYSIS_FEEDBACK_COLLECTION)
 
 
 def create_document(collection_ref):

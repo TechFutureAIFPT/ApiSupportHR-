@@ -53,6 +53,64 @@ class HistorySaveRequest(BaseModel):
     hardFilters: dict[str, Any] = Field(default_factory=dict)
 
 
+class AnalysisFeedbackRequest(BaseModel):
+    sessionId: str | None = None
+    historyId: str | None = None
+    syncHistoryId: str | None = None
+    candidateId: str | None = None
+    candidateName: str | None = None
+    fileName: str | None = None
+    jobPosition: str | None = None
+    jdHash: str | None = None
+    promptKey: str | None = None
+    promptVersion: str | None = None
+    modelVersion: str | None = None
+    action: Literal["like", "dislike", "shortlist", "reject", "interview", "hire", "neutral"]
+    aiScore: float | None = None
+    finalScore: float | None = None
+    rank: str | None = None
+    reason: str | None = None
+    notes: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalysisFeedbackResponse(BaseModel):
+    id: str
+    uid: str
+    userEmail: str = ""
+    displayName: str = ""
+    photoUrl: str = ""
+    sessionId: str | None = None
+    historyId: str | None = None
+    syncHistoryId: str | None = None
+    candidateId: str | None = None
+    candidateName: str | None = None
+    fileName: str | None = None
+    jobPosition: str | None = None
+    jdHash: str | None = None
+    promptKey: str | None = None
+    promptVersion: str | None = None
+    modelVersion: str | None = None
+    action: str
+    aiScore: float | None = None
+    finalScore: float | None = None
+    rank: str | None = None
+    reason: str | None = None
+    notes: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    createdAt: int | None = None
+    updatedAt: int | None = None
+
+
+class AnalysisFeedbackStatsResponse(BaseModel):
+    totalFeedback: int = 0
+    actionsCount: dict[str, int] = Field(default_factory=dict)
+    positiveCount: int = 0
+    negativeCount: int = 0
+    latestFeedbackAt: int | None = None
+    recentEntries: list[AnalysisFeedbackResponse] = Field(default_factory=list)
+
+
 class AnalysisRunDataRequest(BaseModel):
     timestamp: int | None = None
     job: dict[str, Any] = Field(default_factory=dict)

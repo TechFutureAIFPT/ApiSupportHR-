@@ -56,6 +56,7 @@ def get_synced_history(user: AuthenticatedUser, limit_count: int = 20) -> list[d
 def get_sync_stats(user: AuthenticatedUser) -> dict[str, Any]:
     cache_docs = list(repo.synced_cache().where("uid", "==", user.uid).stream())
     history_docs = list(repo.synced_history().where("uid", "==", user.uid).stream())
+    feedback_docs = list(repo.analysis_feedback().where("uid", "==", user.uid).stream())
     latest_history = sorted_docs(history_docs, "timestamp")[:1]
     last_sync_time = None
     if latest_history:
@@ -64,6 +65,7 @@ def get_sync_stats(user: AuthenticatedUser) -> dict[str, Any]:
     return {
         "cacheEntries": len(cache_docs),
         "historyEntries": len(history_docs),
+        "feedbackEntries": len(feedback_docs),
         "lastSyncTime": last_sync_time,
     }
 
