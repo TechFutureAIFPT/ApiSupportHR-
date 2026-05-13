@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import json
-import math
 import re
-from functools import lru_cache
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.services.gemini_service import embed_text
+from app.services.vector_store_service import search_similar_records
 
 
 IT_KEYWORDS = ["it", "software", "developer", "engineer", "backend", "frontend", "fullstack", "full-stack", "devops", "data engineer", "data scientist", "ky su", "lap trinh", "qa", "tester", "product manager"]
@@ -457,68 +453,19 @@ def _detect_industry(candidate: Dict[str, Any], hard_filters: Dict[str, Any]) ->
     return None
 
 
-def _cosine_similarity(a: List[float], b: List[float]) -> Optional[float]:
-    if not a or not b or len(a) != len(b):
-        return None
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-    if norm_a == 0 or norm_b == 0:
-        return None
-    return dot / (norm_a * norm_b)
-
-
-def _similarity_to_bonus(avg: float) -> float:
-    if avg >= 0.88:
-        return 5.0
-    if avg >= 0.83:
-        return 3.5
-    if avg >= 0.78:
-        return 2.0
-    if avg >= 0.72:
-        return 1.0
-    return 0.0
-
-
-@lru_cache(maxsize=4)
-def _load_embedding_records(industry: str) -> List[Dict[str, Any]]:
-    base_dir = Path(__file__).resolve().parents[3] / "frontend" / "public" / "data"
-    path = base_dir / f"{industry}-embeddings.json"
-    if not path.exists():
-        return []
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return data.get("records", []) if isinstance(data, dict) else []
-
-
 def _compute_industry_similarity(industry: str, cv_text: str) -> Optional[Dict[str, Any]]:
-    records = _load_embedding_records(industry)
-    if not records:
+    result = search_similar_records(industry, cv_text, top_k=3, min_similarity=0.0)
+    if not result:
         return None
-    vector = embed_text(re.sub(r"\s+", " ", cv_text).strip()[:6000], "text-embedding-004")
-    if not vector:
-        return None
-    matches = []
-    for record in records:
-        similarity = _cosine_similarity(vector, record.get("vector") or [])
-        if similarity is None:
-            continue
-        matches.append({
-            "id": record.get("id"),
-            "name": record.get("name"),
-            "role": record.get("role"),
-            "relativePath": record.get("relativePath"),
-            "similarity": similarity,
-        })
-    matches.sort(key=lambda item: item["similarity"], reverse=True)
-    top_matches = matches[:3]
-    if not top_matches:
-        return None
-    average = sum(item["similarity"] for item in top_matches) / len(top_matches)
     return {
         "industry": industry,
-        "averageSimilarity": average,
-        "topMatches": top_matches,
-        "bonusPoints": _similarity_to_bonus(average),
+        "provider": result.get("provider"),
+        "collectionKey": result.get("collectionKey"),
+        "queryModel": result.get("queryModel"),
+        "recordCount": result.get("recordCount"),
+        "averageSimilarity": result.get("averageSimilarity"),
+        "topMatches": result.get("topMatches"),
+        "bonusPoints": result.get("bonusPoints"),
     }
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
@@ -47,6 +48,15 @@ class Settings:
         self.google_oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
         self.google_oauth_redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "")
         raw_drive_origins = os.getenv("GOOGLE_DRIVE_ALLOWED_ORIGINS", "").strip()
+        self.vector_store_provider = os.getenv("VECTOR_STORE_PROVIDER", "json").strip().lower() or "json"
+        self.vector_store_json_dir = os.getenv(
+            "VECTOR_STORE_JSON_DIR",
+            str(Path(__file__).resolve().parents[2] / "data" / "vector-library"),
+        )
+        self.vector_store_firestore_collection = (
+            os.getenv("VECTOR_STORE_FIRESTORE_COLLECTION", "vectorLibraryRecords").strip()
+            or "vectorLibraryRecords"
+        )
         default_drive_origins = list(dict.fromkeys([self.frontend_origin, *DEFAULT_WEB_ORIGINS]))
         if raw_drive_origins:
             self.google_drive_allowed_origins = list(
