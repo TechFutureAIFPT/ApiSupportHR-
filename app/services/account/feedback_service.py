@@ -40,7 +40,13 @@ def _feedback_doc_id(user: AuthenticatedUser, payload: dict[str, Any]) -> str:
     return f"fb_{digest}"
 
 
-def _normalize_feedback_payload(user: AuthenticatedUser, payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+def _normalize_feedback_payload(
+    user: AuthenticatedUser,
+    payload: dict[str, Any],
+    *,
+    doc_id: str,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     current = existing or {}
     action = str(payload.get("action") or current.get("action") or "").strip().lower()
     if not action:
@@ -63,6 +69,7 @@ def _normalize_feedback_payload(user: AuthenticatedUser, payload: dict[str, Any]
         raise ValueError("Cần ít nhất một định danh ứng viên: candidateId, fileName hoặc candidateName.")
 
     return {
+        "id": doc_id,
         "uid": user.uid,
         "userEmail": user.email,
         "displayName": user.display_name or "",
@@ -95,7 +102,7 @@ def save_feedback(user: AuthenticatedUser, payload: dict[str, Any]) -> str:
     doc_ref = repo.analysis_feedback().document(doc_id)
     snapshot = doc_ref.get()
     current = snapshot.to_dict() or {}
-    normalized = _normalize_feedback_payload(user, payload, existing=current)
+    normalized = _normalize_feedback_payload(user, payload, doc_id=doc_id, existing=current)
     doc_ref.set(normalized, merge=True)
     return doc_id
 
@@ -126,7 +133,7 @@ def list_feedback(
             continue
         if normalized_action and str(data.get("action") or "").lower() != normalized_action:
             continue
-        items.append({"id": doc.id, **data})
+        items.append({**data, "id": doc.id})
         if len(items) >= limit_count:
             break
     return items
@@ -139,7 +146,7 @@ def get_feedback_by_id(user: AuthenticatedUser, feedback_id: str) -> dict[str, A
     data = snapshot.to_dict() or {}
     if data.get("uid") != user.uid:
         return None
-    return {"id": snapshot.id, **serialize(data)}
+    return {**serialize(data), "id": snapshot.id}
 
 
 def delete_feedback(user: AuthenticatedUser, feedback_id: str) -> bool:
