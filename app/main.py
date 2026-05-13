@@ -3,9 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes_ai import router as ai_router
-from app.api.routes_account import router as account_router
-from app.api.routes_files import router as file_router
+from app.api.routes import account_router, ai_router, files_router
 from app.core.config import get_settings
 
 
@@ -33,7 +31,7 @@ app.add_middleware(
 )
 
 app.include_router(ai_router)
-app.include_router(file_router)
+app.include_router(files_router)
 app.include_router(account_router)
 
 
