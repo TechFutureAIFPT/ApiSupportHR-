@@ -92,6 +92,42 @@ def _format_score_value(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
+def _extract_numeric_score(value: str) -> float | None:
+    match = re.search(r"[+-]?\d+(?:\.\d+)?", value or "")
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _normalize_core_score(score: str, max_score: float) -> str:
+    if max_score <= 0:
+        return score or "0"
+
+    numeric = _extract_numeric_score(score)
+    if not score:
+        return f"0/{_format_score_value(max_score)}"
+
+    ratio_match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*/\s*([+-]?\d+(?:\.\d+)?)", score)
+    if ratio_match:
+        try:
+            current = float(ratio_match.group(1))
+            current_max = float(ratio_match.group(2))
+        except ValueError:
+            current = numeric if numeric is not None else 0.0
+            current_max = 0.0
+        if current_max > 0:
+            return f"{_format_score_value(current)}/{_format_score_value(current_max)}"
+        return f"{_format_score_value(current)}/{_format_score_value(max_score)}"
+
+    if numeric is not None:
+        return f"{_format_score_value(numeric)}/{_format_score_value(max_score)}"
+
+    return f"0/{_format_score_value(max_score)}"
+
+
 def _get_detail_value(record: Dict[str, Any], *keys: str) -> str:
     for key in keys:
         value = record.get(key)
@@ -124,14 +160,17 @@ def _ensure_analysis_shape(candidate: Dict[str, Any], criterion_specs: List[Dict
     for spec in criterion_specs:
         existing = matched_details.get(spec["normalized"])
         if existing:
-            score = _get_detail_value(existing, "Diem", "Điểm", "Äiá»ƒm")
+            score = _normalize_core_score(
+                _get_detail_value(existing, "Diem", "Điểm", "Äiá»ƒm"),
+                float(spec["max_score"] or 0),
+            )
             formula = _get_detail_value(existing, "Cong thuc", "Công thức", "CÃ´ng thá»©c")
             evidence = _get_detail_value(existing, "Dan chung", "Dẫn chứng", "Dáº«n chá»©ng")
             explanation = _get_detail_value(existing, "Giai thich", "Giải thích", "Giáº£i thÃ­ch")
             normalized_details.append(
                 _detail_item(
                     spec["name"],
-                    score or (f"0/{_format_score_value(spec['max_score'])}" if spec["max_score"] > 0 else "0"),
+                    score,
                     formula,
                     evidence or MISSING_DETAIL_EVIDENCE,
                     explanation or MISSING_DETAIL_EXPLANATION,
