@@ -104,22 +104,51 @@ def clear_vector_store_cache() -> None:
     _load_json_records.cache_clear()
 
 
-def _load_firestore_records(collection_key: str, collection_name: str) -> list[dict[str, Any]]:
-    docs = list(repo.vector_library(collection_name).where("collectionKey", "==", collection_key).stream())
+def _load_firestore_records(
+    collection_key: str,
+    collection_name: str,
+    *,
+    owner_uid: str | None = None,
+    exclude_file_names: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    try:
+        docs = list(repo.vector_library(collection_name).where("collectionKey", "==", collection_key).stream())
+    except Exception:
+        return []
     records: list[dict[str, Any]] = []
     for snapshot in docs:
         data = snapshot.to_dict() or {}
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        if owner_uid and str(metadata.get("ownerUid") or data.get("ownerUid") or "") != owner_uid:
+            continue
+        record_file_name = str(metadata.get("fileName") or data.get("fileName") or "").strip().lower()
+        if exclude_file_names and record_file_name and record_file_name in exclude_file_names:
+            continue
+        source_file_type = str(metadata.get("fileType") or data.get("fileType") or "").strip().lower()
+        if source_file_type and source_file_type != "cv":
+            continue
         normalized = _normalize_record(data, fallback_id=snapshot.id)
         if normalized["vector"]:
             records.append(normalized)
     return records
 
 
-def _load_collection_records(collection_key: str, provider: str | None = None) -> tuple[str, list[dict[str, Any]]]:
+def _load_collection_records(
+    collection_key: str,
+    provider: str | None = None,
+    *,
+    owner_uid: str | None = None,
+    exclude_file_names: set[str] | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
     settings = get_settings()
-    preferred_provider = (provider or settings.vector_store_provider or "json").strip().lower()
-    if preferred_provider == "firestore":
-        records = _load_firestore_records(collection_key, settings.vector_store_firestore_collection)
+    preferred_provider = (provider or settings.vector_store_provider or "auto").strip().lower()
+    if preferred_provider in {"auto", "firestore", "hybrid"}:
+        records = _load_firestore_records(
+            collection_key,
+            settings.vector_store_firestore_collection,
+            owner_uid=owner_uid,
+            exclude_file_names=exclude_file_names,
+        )
         if records:
             return "firestore", records
     records = _load_json_records(collection_key, settings.vector_store_json_dir)
@@ -134,13 +163,25 @@ def search_similar_records(
     min_similarity: float = 0.0,
     provider: str | None = None,
     query_vector: list[float] | None = None,
+    owner_uid: str | None = None,
+    exclude_file_names: list[str] | None = None,
 ) -> dict[str, Any] | None:
     normalized_key = _normalize_collection_key(collection_key)
     cleaned_query = _clean_query_text(query_text)
     if not normalized_key or not cleaned_query:
         return None
 
-    active_provider, records = _load_collection_records(normalized_key, provider=provider)
+    excluded_file_name_set = {
+        str(value).strip().lower()
+        for value in (exclude_file_names or [])
+        if str(value).strip()
+    }
+    active_provider, records = _load_collection_records(
+        normalized_key,
+        provider=provider,
+        owner_uid=owner_uid,
+        exclude_file_names=excluded_file_name_set or None,
+    )
     if not records:
         return None
 

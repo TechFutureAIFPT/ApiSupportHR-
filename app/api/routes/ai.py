@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.deps import get_current_user
 from app.schemas.analysis import (
     CandidateEnrichmentRequest,
     CandidateEnrichmentResponse,
@@ -26,6 +27,7 @@ from app.schemas.workflows import (
     JdStructureRequest,
     JdStructureResponse,
 )
+from app.schemas.account import AuthenticatedUser
 from app.services.candidate_enrichment_service import enrich_candidates
 from app.services.candidate_refinement_service import refine_cv_profile
 from app.services.cv_analysis_service import analyze_cv_entries
@@ -98,12 +100,16 @@ def cv_refine_profile(payload: CvProfileRefineRequest) -> CvProfileRefineRespons
 
 
 @router.post("/cv/enrich", response_model=CandidateEnrichmentResponse)
-def cv_enrich(payload: CandidateEnrichmentRequest) -> CandidateEnrichmentResponse:
+def cv_enrich(
+    payload: CandidateEnrichmentRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> CandidateEnrichmentResponse:
     return CandidateEnrichmentResponse(
         candidates=enrich_candidates(
             payload.candidates,
             payload.cv_text_map,
             payload.jd_text,
             payload.hard_filters,
+            owner_uid=current_user.uid,
         )
     )

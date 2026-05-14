@@ -48,7 +48,7 @@ class Settings:
         self.google_oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
         self.google_oauth_redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "")
         raw_drive_origins = os.getenv("GOOGLE_DRIVE_ALLOWED_ORIGINS", "").strip()
-        self.vector_store_provider = os.getenv("VECTOR_STORE_PROVIDER", "json").strip().lower() or "json"
+        self.vector_store_provider = os.getenv("VECTOR_STORE_PROVIDER", "auto").strip().lower() or "auto"
         self.vector_store_json_dir = os.getenv(
             "VECTOR_STORE_JSON_DIR",
             str(Path(__file__).resolve().parents[2] / "data" / "vector-library"),

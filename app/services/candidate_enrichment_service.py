@@ -453,8 +453,20 @@ def _detect_industry(candidate: Dict[str, Any], hard_filters: Dict[str, Any]) ->
     return None
 
 
-def _compute_industry_similarity(industry: str, cv_text: str) -> Optional[Dict[str, Any]]:
-    result = search_similar_records(industry, cv_text, top_k=3, min_similarity=0.0)
+def _compute_industry_similarity(
+    industry: str,
+    cv_text: str,
+    owner_uid: str | None = None,
+    file_name: str | None = None,
+) -> Optional[Dict[str, Any]]:
+    result = search_similar_records(
+        industry,
+        cv_text,
+        top_k=3,
+        min_similarity=0.0,
+        owner_uid=owner_uid,
+        exclude_file_names=[file_name] if file_name else None,
+    )
     if not result:
         return None
     return {
@@ -469,7 +481,13 @@ def _compute_industry_similarity(industry: str, cv_text: str) -> Optional[Dict[s
     }
 
 
-def enrich_candidates(candidates: List[Dict[str, Any]], cv_text_map: Dict[str, str], jd_text: str, hard_filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+def enrich_candidates(
+    candidates: List[Dict[str, Any]],
+    cv_text_map: Dict[str, str],
+    jd_text: str,
+    hard_filters: Dict[str, Any],
+    owner_uid: str | None = None,
+) -> List[Dict[str, Any]]:
     jd_skills = _extract_skills_from_jd(jd_text)
     enriched: List[Dict[str, Any]] = []
     for candidate in candidates:
@@ -556,7 +574,12 @@ def enrich_candidates(candidates: List[Dict[str, Any]], cv_text_map: Dict[str, s
         if cv_text:
             industry = _detect_industry(candidate, hard_filters)
             if industry:
-                insight = _compute_industry_similarity(industry, cv_text)
+                insight = _compute_industry_similarity(
+                    industry,
+                    cv_text,
+                    owner_uid=owner_uid,
+                    file_name=str(candidate.get("fileName") or ""),
+                )
                 if insight:
                     candidate["embeddingInsights"] = insight
                     details.insert(0, _detail_item(

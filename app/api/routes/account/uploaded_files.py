@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from app.api.deps import get_current_user
 from app.schemas.account import AuthenticatedUser, UploadedFileCreateRequest, UploadedFilesBatchRequest
 from app.services.account import uploaded_file_service
+from app.services import vector_index_service
 
 
 router = APIRouter()
@@ -18,6 +19,14 @@ def save_uploaded_file(payload: UploadedFileCreateRequest, current_user: Authent
 @router.post("/uploaded-files/batch")
 def save_uploaded_files(payload: UploadedFilesBatchRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
     return {"ids": uploaded_file_service.save_uploaded_files(current_user, [item.model_dump() for item in payload.files])}
+
+
+@router.post("/uploaded-files/vector-index/rebuild")
+def rebuild_uploaded_files_vector_index(
+    limit_count: int = Query(default=500, ge=1, le=500),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return vector_index_service.rebuild_uploaded_file_vector_index(current_user, limit_count=limit_count)
 
 
 @router.get("/uploaded-files")
@@ -50,6 +59,11 @@ def delete_uploaded_file(file_id: str, current_user: AuthenticatedUser = Depends
 @router.post("/uploaded-files/{file_id}/touch")
 def touch_uploaded_file(file_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
     return {"ok": uploaded_file_service.touch_file(current_user, file_id)}
+
+
+@router.post("/uploaded-files/{file_id}/vectorize")
+def vectorize_uploaded_file(file_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
+    return vector_index_service.reindex_uploaded_file(current_user, file_id)
 
 
 @router.get("/uploaded-files/stats")

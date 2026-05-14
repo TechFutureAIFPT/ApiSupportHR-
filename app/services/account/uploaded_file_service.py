@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.shared import serialize, sorted_docs
+from app.services import vector_index_service
 
 
 MAX_FILES_PER_USER = 500
@@ -22,25 +23,25 @@ def save_uploaded_file(user: AuthenticatedUser, payload: dict[str, object]) -> s
     extracted_text = str(payload.get("extractedText") or "")
 
     doc_ref = repo.create_document(repo.uploaded_files())
-    doc_ref.set(
-        {
-            "uid": user.uid,
-            "email": user.email,
-            "fileName": file_name,
-            "fileType": str(payload.get("fileType") or "cv"),
-            "fileSize": int(payload.get("fileSize") or 0),
-            "mimeType": str(payload.get("mimeType") or ""),
-            "fileExtension": extension,
-            "ocrMethod": str(payload.get("ocrMethod") or ""),
-            "extractedText": extracted_text[:MAX_EXTRACTED_TEXT_LENGTH],
-            "extractedTextLength": len(extracted_text),
-            "processingTimeMs": int(payload.get("processingTimeMs") or 0),
-            "analysisSessionId": payload.get("analysisSessionId"),
-            "candidateName": payload.get("candidateName"),
-            "jobPosition": payload.get("jobPosition"),
-            "uploadedAt": repo.server_timestamp(),
-        }
-    )
+    stored_payload = {
+        "uid": user.uid,
+        "email": user.email,
+        "fileName": file_name,
+        "fileType": str(payload.get("fileType") or "cv"),
+        "fileSize": int(payload.get("fileSize") or 0),
+        "mimeType": str(payload.get("mimeType") or ""),
+        "fileExtension": extension,
+        "ocrMethod": str(payload.get("ocrMethod") or ""),
+        "extractedText": extracted_text[:MAX_EXTRACTED_TEXT_LENGTH],
+        "extractedTextLength": len(extracted_text),
+        "processingTimeMs": int(payload.get("processingTimeMs") or 0),
+        "analysisSessionId": payload.get("analysisSessionId"),
+        "candidateName": payload.get("candidateName"),
+        "jobPosition": payload.get("jobPosition"),
+        "uploadedAt": repo.server_timestamp(),
+    }
+    doc_ref.set(stored_payload)
+    vector_index_service.try_sync_uploaded_file_to_vector_store(user, doc_ref.id, stored_payload)
     cleanup_uploaded_files(user, MAX_FILES_PER_USER)
     return doc_ref.id
 
@@ -75,6 +76,7 @@ def delete_file(user: AuthenticatedUser, file_id: str) -> bool:
     if data.get("uid") != user.uid:
         return False
     snapshot.reference.delete()
+    vector_index_service.delete_uploaded_file_vector_record(file_id)
     return True
 
 
