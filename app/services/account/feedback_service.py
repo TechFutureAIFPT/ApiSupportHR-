@@ -10,6 +10,8 @@ from app.services.account.shared import serialize, sorted_docs
 
 POSITIVE_ACTIONS = {"like", "shortlist", "interview", "hire"}
 NEGATIVE_ACTIONS = {"dislike", "reject"}
+HIGH_SEVERITY_SCORE_DELTA = 15.0
+MEDIUM_SEVERITY_SCORE_DELTA = 8.0
 
 
 def _first_non_empty(*values: Any) -> str:
@@ -20,6 +22,58 @@ def _first_non_empty(*values: Any) -> str:
         if text:
             return text
     return ""
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_feedback_metadata(payload: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    current_metadata = current.get("metadata")
+    payload_metadata = payload.get("metadata")
+    if isinstance(current_metadata, dict):
+        normalized.update(current_metadata)
+    if isinstance(payload_metadata, dict):
+        normalized.update(payload_metadata)
+    return normalized
+
+
+def _derive_feedback_severity(ai_score: Any, final_score: Any, existing: Any = None) -> str:
+    ai_score_value = _to_float(ai_score)
+    final_score_value = _to_float(final_score)
+
+    if ai_score_value is None or final_score_value is None:
+        existing_value = str(existing or "").strip().lower()
+        if existing_value in {"low", "medium", "high"}:
+            return existing_value
+        return "low"
+
+    delta = abs(final_score_value - ai_score_value)
+    if delta >= HIGH_SEVERITY_SCORE_DELTA:
+        return "high"
+    if delta >= MEDIUM_SEVERITY_SCORE_DELTA:
+        return "medium"
+    return "low"
 
 
 def _feedback_doc_id(user: AuthenticatedUser, payload: dict[str, Any]) -> str:
@@ -48,9 +102,11 @@ def _normalize_feedback_payload(
     existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current = existing or {}
+    current_metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+    payload_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     action = str(payload.get("action") or current.get("action") or "").strip().lower()
     if not action:
-        raise ValueError("Thiếu action feedback.")
+        raise ValueError("Thieu action feedback.")
 
     scope_key = _first_non_empty(
         payload.get("syncHistoryId"),
@@ -64,9 +120,26 @@ def _normalize_feedback_payload(
         payload.get("candidateName"),
     )
     if not scope_key:
-        raise ValueError("Cần ít nhất một scope để gắn feedback: syncHistoryId, historyId, sessionId hoặc jdHash.")
+        raise ValueError("Can it nhat mot scope de gan feedback: syncHistoryId, historyId, sessionId hoac jdHash.")
     if not candidate_key:
-        raise ValueError("Cần ít nhất một định danh ứng viên: candidateId, fileName hoặc candidateName.")
+        raise ValueError("Can it nhat mot dinh danh ung vien: candidateId, fileName hoac candidateName.")
+
+    ai_score = payload.get("aiScore", current.get("aiScore"))
+    final_score = payload.get("finalScore", current.get("finalScore"))
+    is_reusable_guidance = _coerce_bool(
+        payload.get("isReusableGuidance", payload_metadata.get("isReusableGuidance")),
+        default=_coerce_bool(
+            current.get("isReusableGuidance", current_metadata.get("isReusableGuidance")),
+            default=False,
+        ),
+    )
+    metadata = _normalize_feedback_metadata(payload, current)
+    metadata["feedbackScope"] = "reusable-guidance" if is_reusable_guidance else "candidate-specific"
+    if "scoreDifference" not in metadata:
+        ai_score_value = _to_float(ai_score)
+        final_score_value = _to_float(final_score)
+        if ai_score_value is not None and final_score_value is not None:
+            metadata["scoreDifference"] = final_score_value - ai_score_value
 
     return {
         "id": doc_id,
@@ -86,12 +159,14 @@ def _normalize_feedback_payload(
         "promptVersion": _first_non_empty(payload.get("promptVersion"), current.get("promptVersion")),
         "modelVersion": _first_non_empty(payload.get("modelVersion"), current.get("modelVersion")),
         "action": action,
-        "aiScore": payload.get("aiScore", current.get("aiScore")),
-        "finalScore": payload.get("finalScore", current.get("finalScore")),
+        "aiScore": ai_score,
+        "finalScore": final_score,
+        "isReusableGuidance": is_reusable_guidance,
+        "severity": _derive_feedback_severity(ai_score, final_score, current.get("severity")),
         "rank": _first_non_empty(payload.get("rank"), current.get("rank")),
         "reason": _first_non_empty(payload.get("reason"), current.get("reason")),
         "notes": _first_non_empty(payload.get("notes"), current.get("notes")),
-        "metadata": payload.get("metadata") or current.get("metadata") or {},
+        "metadata": metadata,
         "createdAt": current.get("createdAt") or repo.server_timestamp(),
         "updatedAt": repo.server_timestamp(),
     }

@@ -103,7 +103,8 @@ class FeedbackApiTests(unittest.TestCase):
             "jobPosition": "Backend Developer",
             "action": "shortlist",
             "aiScore": 81,
-            "finalScore": 84,
+            "finalScore": 61,
+            "isReusableGuidance": True,
             "rank": "A",
             "reason": "Phu hop JD",
             "notes": "Moi phong van",
@@ -120,10 +121,14 @@ class FeedbackApiTests(unittest.TestCase):
         self.assertEqual(created["action"], "shortlist")
         self.assertEqual(created["candidateId"], "cand-001")
         self.assertEqual(created["promptVersion"], "v1")
+        self.assertTrue(created["isReusableGuidance"])
+        self.assertEqual(created["severity"], "high")
         feedback_id = created["id"]
         stored = self.fake_feedback.store[feedback_id]
         self.assertEqual(stored["id"], feedback_id)
         self.assertEqual(stored["uid"], "user-123")
+        self.assertEqual(stored["metadata"]["feedbackScope"], "reusable-guidance")
+        self.assertEqual(stored["metadata"]["scoreDifference"], -20.0)
 
         list_response = self.client.get("/api/account/history/feedback", params={"sync_history_id": "sync-001"})
         self.assertEqual(list_response.status_code, 200, list_response.text)
@@ -136,6 +141,8 @@ class FeedbackApiTests(unittest.TestCase):
             json={
                 **payload,
                 "action": "hire",
+                "isReusableGuidance": False,
+                "finalScore": 72,
                 "notes": "Da duoc nhan",
             },
         )
@@ -144,6 +151,8 @@ class FeedbackApiTests(unittest.TestCase):
         self.assertEqual(updated["id"], feedback_id)
         self.assertEqual(updated["action"], "hire")
         self.assertEqual(updated["notes"], "Da duoc nhan")
+        self.assertFalse(updated["isReusableGuidance"])
+        self.assertEqual(updated["severity"], "medium")
 
         stats_response = self.client.get("/api/account/history/feedback/stats", params={"sync_history_id": "sync-001"})
         self.assertEqual(stats_response.status_code, 200, stats_response.text)

@@ -68,6 +68,7 @@ class AnalysisFeedbackRequest(BaseModel):
     action: Literal["like", "dislike", "shortlist", "reject", "interview", "hire", "neutral"]
     aiScore: float | None = None
     finalScore: float | None = None
+    isReusableGuidance: bool | None = None
     rank: str | None = None
     reason: str | None = None
     notes: str | None = None
@@ -94,6 +95,8 @@ class AnalysisFeedbackResponse(BaseModel):
     action: str
     aiScore: float | None = None
     finalScore: float | None = None
+    isReusableGuidance: bool = False
+    severity: Literal["low", "medium", "high"] = "low"
     rank: str | None = None
     reason: str | None = None
     notes: str | None = None
