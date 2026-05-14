@@ -273,9 +273,11 @@ def _analyze_soft_skills(cv_text: str) -> Dict[str, Dict[str, Any]]:
         tenure_text = "Khong du du lieu de phan tich su on dinh."
 
     return {
-        "Kỹ năng hành động & chủ động": {"score": round(score, 1), "maxScore": 10, "reasoning": f"{label}. {action_reasoning}"},
-        "Trình bày STAR & Kết quả": {"score": star_score, "maxScore": 10, "reasoning": star_reasoning},
-        "Sự ổn định & Trung thành": {"score": loyalty_index, "maxScore": 10, "reasoning": ("On dinh" if loyalty_tag == "stable" else "Kha linh hoat" if loyalty_tag == "moderate" else "Nhay viec thuong xuyen") + f". {tenure_text}"},
+        "Mức độ trung thành": {
+            "score": loyalty_index,
+            "maxScore": 10,
+            "reasoning": ("On dinh" if loyalty_tag == "stable" else "Kha linh hoat" if loyalty_tag == "moderate" else "Nhay viec thuong xuyen") + f". {tenure_text}"
+        },
     }
 
 
@@ -488,7 +490,6 @@ def enrich_candidates(
     hard_filters: Dict[str, Any],
     owner_uid: str | None = None,
 ) -> List[Dict[str, Any]]:
-    jd_skills = _extract_skills_from_jd(jd_text)
     enriched: List[Dict[str, Any]] = []
     for candidate in candidates:
         cv_text = cv_text_map.get(str(candidate.get("fileName", "")), "")
@@ -506,26 +507,6 @@ def enrich_candidates(
 
             for key, val in _analyze_soft_skills(cv_text).items():
                 details.append(_detail_item(key, f"{val['score']}/{val['maxScore']}", "", str(val["reasoning"])[:200], val["reasoning"]))
-
-            velocity = _analyze_career_velocity(cv_text)
-            if velocity["totalMonths"] > 0:
-                details.append(_detail_item(
-                    "Tiềm năng phát triển (Career Velocity)",
-                    f"{velocity['potentialScore']}/20",
-                    f"Bac cao nhat: {velocity['peakTitle']} (cap {velocity['peakLevel']}) | {velocity['promotionCount']} lan thang tien",
-                    f"{velocity['avgMonthsPerLevel']} thang/bac — {velocity['velocityTag']}",
-                    f"Toc do thang tien {'nhanh' if velocity['velocityTag'] == 'fast' else 'cham' if velocity['velocityTag'] == 'slow' else 'binh thuong'}.",
-                ))
-
-        skill_match = _score_skill_match(jd_skills, _extract_skills_from_candidate(candidate))
-        if skill_match["matchRate"] > 0:
-            details.append(_detail_item(
-                "Kỹ năng chuyển đổi (Skill Graph)",
-                f"{skill_match['matchRate']}/100",
-                f"{len(skill_match['matchedSkills'])}/{len(jd_skills) or 1} skills khop",
-                f"Clusters: {', '.join(skill_match['familyClusters'][:3]) or 'Khong ro'}",
-                f"Ty le khop ky nang: {skill_match['matchRate']}%. Unmatched: {', '.join(skill_match['unmatchedSkills'][:3]) or 'Khong'}.",
-            ))
 
         companies = _extract_companies_from_candidate(candidate)
         if companies:
