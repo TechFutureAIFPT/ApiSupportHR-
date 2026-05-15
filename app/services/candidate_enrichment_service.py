@@ -72,16 +72,16 @@ def _normalize_text(value: str) -> str:
 
 def _detail_item(title: str, score: str, formula: str, evidence: str, explanation: str) -> Dict[str, str]:
     return {
-        "Tiêu chí": title,
         "TiÃªu chÃ­": title,
-        "Điểm": score,
+        "TiÃƒÂªu chÃƒÂ­": title,
         "Äiá»ƒm": score,
-        "Công thức": formula,
+        "Ã„ÂiÃ¡Â»Æ’m": score,
         "CÃ´ng thá»©c": formula,
-        "Dẫn chứng": evidence,
+        "CÃƒÂ´ng thÃ¡Â»Â©c": formula,
         "Dáº«n chá»©ng": evidence,
-        "Giải thích": explanation,
+        "DÃ¡ÂºÂ«n chÃ¡Â»Â©ng": evidence,
         "Giáº£i thÃ­ch": explanation,
+        "GiÃ¡ÂºÂ£i thÃƒÂ­ch": explanation,
     }
 
 
@@ -92,13 +92,13 @@ def _extract_skills_from_jd(jd_text: str) -> List[str]:
 
 def _extract_skills_from_candidate(candidate: Dict[str, Any]) -> List[str]:
     analysis = candidate.get("analysis") or {}
-    details = analysis.get("Chi tiết") or analysis.get("Chi tiáº¿t") or []
-    strengths = analysis.get("Điểm mạnh CV") or analysis.get("Äiá»ƒm máº¡nh CV") or []
+    details = analysis.get("Chi tiáº¿t") or analysis.get("Chi tiÃ¡ÂºÂ¿t") or []
+    strengths = analysis.get("Äiá»ƒm máº¡nh CV") or analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV") or []
     texts = [
         candidate.get("jobTitle", ""),
         candidate.get("industry", ""),
         candidate.get("department", ""),
-        *[str(item.get("Dẫn chứng") or item.get("Dáº«n chá»©ng") or "") for item in details if isinstance(item, dict)],
+        *[str(item.get("Dáº«n chá»©ng") or item.get("DÃ¡ÂºÂ«n chÃ¡Â»Â©ng") or "") for item in details if isinstance(item, dict)],
         *[str(item) for item in strengths],
     ]
     combined = " ".join(texts).lower()
@@ -107,13 +107,13 @@ def _extract_skills_from_candidate(candidate: Dict[str, Any]) -> List[str]:
 
 def _extract_companies_from_candidate(candidate: Dict[str, Any]) -> List[str]:
     analysis = candidate.get("analysis") or {}
-    details = analysis.get("Chi tiết") or analysis.get("Chi tiáº¿t") or []
-    strengths = analysis.get("Điểm mạnh CV") or analysis.get("Äiá»ƒm máº¡nh CV") or []
+    details = analysis.get("Chi tiáº¿t") or analysis.get("Chi tiÃ¡ÂºÂ¿t") or []
+    strengths = analysis.get("Äiá»ƒm máº¡nh CV") or analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV") or []
     evidence = " ".join([
         str(candidate.get("jobTitle", "")),
         str(candidate.get("industry", "")),
         str(candidate.get("department", "")),
-        *[str(item.get("Dẫn chứng") or item.get("Dáº«n chá»©ng") or "") for item in details if isinstance(item, dict)],
+        *[str(item.get("Dáº«n chá»©ng") or item.get("DÃ¡ÂºÂ«n chÃ¡Â»Â©ng") or "") for item in details if isinstance(item, dict)],
         *[str(item) for item in strengths],
     ]).lower()
     return [name for name in COMPANY_NAME_WORDS if name in evidence]
@@ -123,7 +123,7 @@ def _check_bias_risk(filters: Dict[str, Any]) -> List[str]:
     warnings: List[str] = []
     age = filters.get("age") or {}
     if isinstance(age, dict) and (age.get("min") is not None or age.get("max") is not None):
-        warnings.append(f"Canh bao: Bo loc tuoi ({age.get('min', '?')}–{age.get('max', '?')}) co the vi pham Dieu 8 BLLD 2019.")
+        warnings.append(f"Canh bao: Bo loc tuoi ({age.get('min', '?')}â€“{age.get('max', '?')}) co the vi pham Dieu 8 BLLD 2019.")
     if filters.get("gender"):
         warnings.append("Canh bao: Bo loc gioi tinh co the vi pham luat Binh dang lao dong Viet Nam.")
     if filters.get("ethnicity"):
@@ -134,8 +134,8 @@ def _check_bias_risk(filters: Dict[str, Any]) -> List[str]:
         warnings.append("Canh bao: Bo loc tinh trang hon nhan co the vi pham Dieu 36 BLLD 2019.")
     if warnings:
         warnings.extend([
-            "Dieu 8 BLLD 2019 — Nghiem cam phan biet doi xu tren co so gioi tinh, tuoi tac, ton giao, dan toc.",
-            "Dieu 36 BLLD 2019 — Khong duoc yeu cau xac nhan tinh trang hon nhan khi tuyen dung.",
+            "Dieu 8 BLLD 2019 â€” Nghiem cam phan biet doi xu tren co so gioi tinh, tuoi tac, ton giao, dan toc.",
+            "Dieu 36 BLLD 2019 â€” Khong duoc yeu cau xac nhan tinh trang hon nhan khi tuyen dung.",
         ])
     return warnings
 
@@ -170,115 +170,7 @@ def _contains_any(text: str, words: List[str]) -> List[str]:
 
 
 def _analyze_soft_skills(cv_text: str) -> Dict[str, Dict[str, Any]]:
-    lower = cv_text.lower()
-    leader = _contains_any(lower, LEADER_VERBS)
-    active = _contains_any(lower, ACTIVE_VERBS)
-    passive = _contains_any(lower, PASSIVE_VERBS)
-
-    score = 5 + len(leader) * 1.5 + len(active) * 0.8 - len(passive) * 1.0
-    score = max(0, min(10, score))
-    if leader or score >= 8:
-        label = "Chu dong cao (Lanh dao)"
-    elif len(passive) > len(active):
-        label = "Thu dong"
-    elif active:
-        label = "Chu dong"
-    else:
-        label = "Chua ro"
-
-    action_reasoning_parts = []
-    if leader:
-        action_reasoning_parts.append(f"Dong tu lanh dao: {', '.join(leader[:3])}")
-    if active:
-        action_reasoning_parts.append(f"Dong tu chu dong: {', '.join(active[:5])}")
-    if passive:
-        action_reasoning_parts.append(f"Dong tu thu dong: {', '.join(passive[:3])}")
-    action_reasoning = ". ".join(action_reasoning_parts) or "Khong phat hien mau hanh vi ro rang."
-
-    paragraphs = [p for p in re.split(r"\n\n|\n(?=[A-Z])", cv_text) if len(p.strip()) > 20]
-    s = t = a = r = 0
-    s_ind = ["trước đó", "trong bối cảnh", "khi đó", "thời điểm đó", "challenge", "thach thuc", "van de", "bối cảnh"]
-    t_ind = ["nhiệm vụ", "trách nhiệm", "task", "mission", "goal", "mục tiêu", "objective", "required to"]
-    a_ind = ["đã", "implemented", "developed", "designed", "created", "managed", "led", "coordinated", "analyzed", "triển khai", "xây dựng", "thiết kế", "quản lý", "thực hiện"]
-    r_ind = ["kết quả", "result", "outcome", "achieved", "delivered", "improved", "increased", "reduced", "thành công", "đạt được", "tăng", "hiệu quả"]
-    has_numbers = False
-    has_metrics = False
-    for para in paragraphs:
-        pl = para.lower()
-        s += sum(1 for indicator in s_ind if indicator in pl) > 0
-        t += sum(1 for indicator in t_ind if indicator in pl) > 0
-        a += sum(1 for indicator in a_ind if indicator in pl) > 0
-        r += sum(1 for indicator in r_ind if indicator in pl) > 0
-        has_numbers = has_numbers or bool(re.search(r"\d+", para))
-        has_metrics = has_metrics or any(pattern.search(para) for pattern in METRIC_PATTERNS)
-    s, t, a, r = min(3, s), min(3, t), min(3, a), min(3, r)
-    total = s + t + a + r
-    if total >= 8:
-        star_reasoning = "CV co cau truc STAR ro rang, kem so lieu chung minh."
-    elif total >= 5:
-        star_reasoning = "CV co mot so yeu to STAR, can cai thien ket qua va so lieu."
-    elif total >= 3:
-        star_reasoning = "CV thien ve liet ke trach nhiem, thieu ket qua cu the."
-    else:
-        star_reasoning = "CV rat so luoc, kho danh gia nang luc thuc te."
-    if has_metrics:
-        star_reasoning += " Phat hien so lieu dinh luong."
-    star_score = round((total / 12) * 10, 1)
-
-    jobs = []
-    current_title = ""
-    current_company = ""
-    is_promotion = False
-    loyalty_keywords = ["thăng tiến", "thăng chức", "promotion", "promoted", "advance", "lên cấp", "tăng chức"]
-    for line in [line for line in re.split(r"\n|\r", cv_text) if len(line.strip()) > 5]:
-        title_match = re.search(r"(?:chức danh|vị trí|position|role)[:\s]*(.+)", line, re.IGNORECASE)
-        company_match = re.search(r"(?:công ty|company|doanh nghiệp)[:\s]*(.+)", line, re.IGNORECASE)
-        year_match = re.findall(r"(?:20\d{2}|19\d{2})", line)
-        if title_match:
-            current_title = title_match.group(1).strip()
-            is_promotion = any(keyword in line.lower() for keyword in loyalty_keywords)
-        if company_match:
-            current_company = company_match.group(1).strip()
-        if len(year_match) >= 2:
-            years = [int(value) for value in year_match[:2]]
-            jobs.append({
-                "title": current_title,
-                "company": current_company,
-                "months": max(1, (years[1] - years[0]) * 12),
-                "promotion": is_promotion,
-            })
-            current_title = ""
-            current_company = ""
-            is_promotion = False
-
-    if jobs:
-        total_jobs = len(jobs)
-        total_months = sum(job["months"] for job in jobs)
-        avg_tenure = round(total_months / total_jobs)
-        promotions = sum(1 for job in jobs if job["promotion"])
-        flat_hops = max(0, total_jobs - 1 - promotions)
-        loyalty_index = 10 if avg_tenure >= 36 else 8 if avg_tenure >= 24 else 6 if avg_tenure >= 18 else 4 if avg_tenure >= 12 else 2 if avg_tenure >= 6 else 0
-        loyalty_index = min(10, loyalty_index + promotions)
-        loyalty_index = max(0, loyalty_index - flat_hops if flat_hops >= 3 else loyalty_index)
-        loyalty_tag = "stable" if loyalty_index >= 7 else "moderate" if loyalty_index >= 4 else "frequent"
-        tenure_reasoning = [f"Trung binh {avg_tenure} thang/vi tri."]
-        if promotions:
-            tenure_reasoning.append(f"{promotions} lan nhay kem thang chuc (tich cuc).")
-        if flat_hops:
-            tenure_reasoning.append(f"{flat_hops} lan nhay khong kem thang chuc (can luu y).")
-        tenure_text = " ".join(tenure_reasoning)
-    else:
-        loyalty_index = 10
-        loyalty_tag = "stable"
-        tenure_text = "Khong du du lieu de phan tich su on dinh."
-
-    return {
-        "Mức độ trung thành": {
-            "score": loyalty_index,
-            "maxScore": 10,
-            "reasoning": ("On dinh" if loyalty_tag == "stable" else "Kha linh hoat" if loyalty_tag == "moderate" else "Nhay viec thuong xuyen") + f". {tenure_text}"
-        },
-    }
+    return {}
 
 
 def _infer_level(title: str) -> int:
@@ -303,9 +195,9 @@ def _analyze_career_velocity(experience_text: str) -> Dict[str, Any]:
     current_company = ""
     current_year = 2026
     for line in [line for line in re.split(r"\n|\r", experience_text) if len(line.strip()) > 5]:
-        title_match = re.search(r"(?:chức danh|vị trí|position|role|title)[:\s]*(.+)", line, re.IGNORECASE)
-        company_match = re.search(r"(?:công ty|company|doanh nghiệp|tại)[:\s]*(.+)", line, re.IGNORECASE)
-        year_match = re.findall(r"(?:20\d{2}|19\d{2})(?:\s*[-–]\s*(?:20\d{2}|19\d{2}|nay|hiện tại|present))?", line, re.IGNORECASE)
+        title_match = re.search(r"(?:chá»©c danh|vá»‹ trÃ­|position|role|title)[:\s]*(.+)", line, re.IGNORECASE)
+        company_match = re.search(r"(?:cÃ´ng ty|company|doanh nghiá»‡p|táº¡i)[:\s]*(.+)", line, re.IGNORECASE)
+        year_match = re.findall(r"(?:20\d{2}|19\d{2})(?:\s*[-â€“]\s*(?:20\d{2}|19\d{2}|nay|hiá»‡n táº¡i|present))?", line, re.IGNORECASE)
         if title_match:
             current_title = title_match.group(1).strip()
             current_level = _infer_level(current_title)
@@ -494,11 +386,11 @@ def enrich_candidates(
     for candidate in candidates:
         cv_text = cv_text_map.get(str(candidate.get("fileName", "")), "")
         analysis = candidate.get("analysis") or {}
-        details = analysis.get("Chi tiết") or analysis.get("Chi tiáº¿t")
+        details = analysis.get("Chi tiáº¿t") or analysis.get("Chi tiÃ¡ÂºÂ¿t")
         if not isinstance(details, list):
             details = []
-        analysis["Chi tiết"] = details
         analysis["Chi tiáº¿t"] = details
+        analysis["Chi tiÃ¡ÂºÂ¿t"] = details
 
         if cv_text:
             debias_result = _run_debiasing(cv_text, hard_filters)
@@ -510,13 +402,13 @@ def enrich_candidates(
 
         companies = _extract_companies_from_candidate(candidate)
         if companies:
-            base_score = analysis.get("Tổng điểm") or analysis.get("Tá»•ng Ä‘iá»ƒm") or 50
+            base_score = analysis.get("Tá»•ng Ä‘iá»ƒm") or analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m") or 50
             tiered = _apply_company_tier_multiplier(float(base_score), companies)
             if tiered["adjustedScore"] != base_score:
-                analysis["Tổng điểm"] = min(100, tiered["adjustedScore"])
-                analysis["Tá»•ng Ä‘iá»ƒm"] = analysis["Tổng điểm"]
+                analysis["Tá»•ng Ä‘iá»ƒm"] = min(100, tiered["adjustedScore"])
+                analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
                 details.append(_detail_item(
-                    "Hệ số uy tín công ty",
+                    "Há»‡ sá»‘ uy tÃ­n cÃ´ng ty",
                     f"{'+' if tiered['adjustedScore'] - base_score > 0 else ''}{tiered['adjustedScore'] - base_score:.1f}",
                     tiered["reasoning"],
                     ", ".join([f"{name} (x{multiplier})" for name, multiplier in tiered["multipliers"].items() if multiplier > 1]),
@@ -527,9 +419,9 @@ def enrich_candidates(
             criteria_scores: Dict[str, float] = {}
             criteria_evidence: Dict[str, str] = {}
             for item in details:
-                score_text = str(item.get("Điểm") or item.get("Äiá»ƒm") or "0")
-                criteria = str(item.get("Tiêu chí") or item.get("TiÃªu chÃ­") or "")
-                evidence = str(item.get("Dẫn chứng") or item.get("Dáº«n chá»©ng") or "")
+                score_text = str(item.get("Äiá»ƒm") or item.get("Ã„ÂiÃ¡Â»Æ’m") or "0")
+                criteria = str(item.get("TiÃªu chÃ­") or item.get("TiÃƒÂªu chÃƒÂ­") or "")
+                evidence = str(item.get("Dáº«n chá»©ng") or item.get("DÃ¡ÂºÂ«n chÃ¡Â»Â©ng") or "")
                 try:
                     criteria_scores[criteria] = float(score_text.split("/")[0].replace("+", ""))
                 except Exception:
@@ -547,10 +439,10 @@ def enrich_candidates(
                         signal["reason"],
                         signal["reason"],
                     ))
-                current_score = analysis.get("Tổng điểm") or analysis.get("Tá»•ng Ä‘iá»ƒm")
+                current_score = analysis.get("Tá»•ng Ä‘iá»ƒm") or analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m")
                 if isinstance(current_score, (int, float)):
-                    analysis["Tổng điểm"] = min(100, current_score + total_boost)
-                    analysis["Tá»•ng Ä‘iá»ƒm"] = analysis["Tổng điểm"]
+                    analysis["Tá»•ng Ä‘iá»ƒm"] = min(100, current_score + total_boost)
+                    analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
 
         if cv_text:
             industry = _detect_industry(candidate, hard_filters)
@@ -564,27 +456,27 @@ def enrich_candidates(
                 if insight:
                     candidate["embeddingInsights"] = insight
                     details.insert(0, _detail_item(
-                        f"Chuẩn mẫu {industry.upper()}",
+                        f"Chuáº©n máº«u {industry.upper()}",
                         f"{insight['bonusPoints']:.1f}/5",
                         f"Similarity {insight['averageSimilarity'] * 100:.1f}% => +{insight['bonusPoints']:.1f} diem",
                         "; ".join([f"{item.get('name') or item.get('role') or item.get('id')} {item['similarity'] * 100:.1f}%" for item in insight["topMatches"][:3]]),
                         f"CV tuong dong thu vien CV {industry.upper()} chuan.",
                     ))
-                    current_score = analysis.get("Tổng điểm") or analysis.get("Tá»•ng Ä‘iá»ƒm")
+                    current_score = analysis.get("Tá»•ng Ä‘iá»ƒm") or analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m")
                     if isinstance(current_score, (int, float)):
-                        analysis["Tổng điểm"] = min(100, current_score + insight["bonusPoints"])
-                        analysis["Tá»•ng Ä‘iá»ƒm"] = analysis["Tổng điểm"]
+                        analysis["Tá»•ng Ä‘iá»ƒm"] = min(100, current_score + insight["bonusPoints"])
+                        analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
 
-        score = analysis.get("Tổng điểm") or analysis.get("Tá»•ng Ä‘iá»ƒm")
+        score = analysis.get("Tá»•ng Ä‘iá»ƒm") or analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m")
         if isinstance(score, (int, float)):
-            analysis["Hạng"] = "A" if score >= 75 else "B" if score >= 50 else "C"
-            analysis["Háº¡ng"] = analysis["Hạng"]
+            analysis["Háº¡ng"] = "A" if score >= 75 else "B" if score >= 50 else "C"
+            analysis["HÃ¡ÂºÂ¡ng"] = analysis["Háº¡ng"]
         candidate["analysis"] = analysis
         enriched.append(candidate)
 
     enriched.sort(
         key=lambda candidate: (
-            -float((candidate.get("analysis") or {}).get("Tổng điểm") or (candidate.get("analysis") or {}).get("Tá»•ng Ä‘iá»ƒm") or -1),
+            -float((candidate.get("analysis") or {}).get("Tá»•ng Ä‘iá»ƒm") or (candidate.get("analysis") or {}).get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m") or -1),
             str(candidate.get("fileName") or ""),
         )
     )
