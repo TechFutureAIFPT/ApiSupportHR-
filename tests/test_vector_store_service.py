@@ -123,7 +123,7 @@ class VectorStoreServiceTests(unittest.TestCase):
             self.assertGreaterEqual(result["bonusPoints"], 3.5)
 
     def test_candidate_enrichment_similarity_uses_vector_store_result(self) -> None:
-        candidate_enrichment_service.search_similar_records = lambda industry, cv_text, top_k=3, min_similarity=0.0, owner_uid=None, exclude_file_names=None: {
+        candidate_enrichment_service.search_similar_records = lambda industry, cv_text, top_k=3, min_similarity=0.0, owner_uid=None, exclude_file_names=None, query_vector=None: {
             "provider": "json",
             "collectionKey": "it",
             "queryModel": "gemini-embedding-001",
@@ -143,6 +143,64 @@ class VectorStoreServiceTests(unittest.TestCase):
         self.assertEqual(result["queryModel"], "gemini-embedding-001")
         self.assertEqual(result["recordCount"], 4)
         self.assertEqual(result["bonusPoints"], 3.5)
+
+    def test_enrich_candidates_restores_job_fit_from_jd_cv_embedding(self) -> None:
+        candidate_enrichment_service.embed_text = lambda text, model=None: [1.0, 0.0]
+        candidate_enrichment_service.search_similar_records = (
+            lambda industry, cv_text, top_k=3, min_similarity=0.0, owner_uid=None, exclude_file_names=None, query_vector=None: None
+        )
+
+        enriched = candidate_enrichment_service.enrich_candidates(
+            candidates=[
+                {
+                    "id": "candidate-1",
+                    "fileName": "candidate-1.pdf",
+                    "jobTitle": "Backend Developer",
+                    "industry": "IT",
+                    "department": "Engineering",
+                    "analysis": {
+                        "Tong diem": 42,
+                        "Chi tiet": [
+                            {
+                                "Tieu chi": "Phu hop JD (Job Fit)",
+                                "Diem": "0/20",
+                                "Dan chung": "Chua co",
+                                "Giai thich": "Chua tinh semantic match",
+                            },
+                            {
+                                "Tieu chi": "Kinh nghiem",
+                                "Diem": "10/20",
+                                "Dan chung": "Python FastAPI GraphQL Docker",
+                                "Giai thich": "Co kinh nghiem backend",
+                            },
+                        ],
+                    },
+                }
+            ],
+            cv_text_map={
+                "candidate-1.pdf": "Python FastAPI GraphQL Docker backend engineer with REST API experience.",
+            },
+            jd_text="Backend developer can Python FastAPI GraphQL Docker va xay dung REST API.",
+            hard_filters={},
+            owner_uid="user-123",
+        )
+
+        self.assertEqual(len(enriched), 1)
+        candidate = enriched[0]
+        details = (
+            candidate["analysis"].get("Chi tiÃ¡ÂºÂ¿t")
+            or candidate["analysis"].get("Chi tiÃƒÂ¡Ã‚ÂºÃ‚Â¿t")
+            or candidate["analysis"].get("Chi tiet")
+            or []
+        )
+        job_fit_detail = next(
+            item for item in details
+            if "Job Fit" in str(item.get("TiÃƒÂªu chÃƒÂ­") or item.get("TiÃƒÆ’Ã‚Âªu chÃƒÆ’Ã‚Â­") or item.get("Tieu chi") or "")
+        )
+        self.assertIn("20/20", str(job_fit_detail.get("Ã„ÂiÃ¡Â»Æ’m") or job_fit_detail.get("Diem") or ""))
+        self.assertEqual(candidate["analysis"]["Tong diem"], 62.0)
+        self.assertAlmostEqual(candidate["jdCvMatchInsights"]["similarity"], 1.0)
+        self.assertEqual(candidate["jdCvMatchInsights"]["weightedScore"], 20.0)
 
     def test_search_similar_records_from_firestore_honors_owner_uid(self) -> None:
         fake_vectors = FakeCollection()

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.config import get_settings
+from app.services.gemini_service import embed_text
 from app.services.vector_store_service import search_similar_records
 
 
@@ -64,10 +67,74 @@ TIER1_GLOBAL = ["google", "meta", "facebook", "apple", "amazon", "microsoft", "n
 TIER2_GLOBAL = ["shopee", "lazada", "grab", "vng", "garena", "sea group", "vccorp", "misa", "haravan", "bkav", "mobifone", "cmc", "tencent", "alibaba", "bytedance", "ant group", "mastercard", "visa", "paypal", "atlassian", "slack", "zoom", "dropbox", "twilio"]
 TIER1_VN = ["fpt", "viettel", "vnpt", "vingroup", "vinfast", "vietinbank", "vietcombank", "bidv", "agribank", "mb bank", "tp bank", "acb", "sacombank", "petrovietnam", "evn", "vnre", "sao do", "mobifone", "vietnammobile"]
 TIER2_VN = ["vietnampost", "cuc buu chinh", "cmc", "bkav", "viettel solutions", "vnpt technology", "fpt software", "fpt telecom", "vng", "vccorp", "sendo", "tiki", "haravan", "base", "1975", "gtv", "viec lam 24h", "jobstreet", "mywork", "workbvietnam"]
+JD_FIT_CRITERION_LABEL = "Phù hợp JD (Job Fit)"
+JD_FIT_CRITERION_ALIASES = [JD_FIT_CRITERION_LABEL, "Phù hợp JD", "Job Fit", "Phu hop JD"]
+JD_FIT_MAX_SCORE = 20.0
+JD_CV_SIMILARITY_FLOOR = 0.45
+JD_CV_SIMILARITY_CEILING = 0.90
+MAX_EMBEDDING_TEXT_LENGTH = 6000
 
 
 def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").lower()).strip()
+
+
+def _normalize_lookup_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    normalized = normalized.replace("đ", "d").replace("Đ", "d")
+    return re.sub(r"[^a-z0-9]+", " ", normalized.lower()).strip()
+
+
+def _get_record_value(record: Dict[str, Any], aliases: List[str]) -> str:
+    alias_set = {_normalize_lookup_key(alias) for alias in aliases}
+    for key, value in record.items():
+        if value is None or str(value).strip() == "":
+            continue
+        if _normalize_lookup_key(str(key)) in alias_set:
+            return str(value).strip()
+    return ""
+
+
+def _parse_numeric_value(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        match = re.search(r"[+-]?\d+(?:\.\d+)?", value)
+        if match:
+            try:
+                return float(match.group(0))
+            except ValueError:
+                return None
+    return None
+
+
+def _format_score_value(value: float) -> str:
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
+def _parse_detail_score(value: str) -> tuple[float | None, float | None]:
+    ratio_match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*/\s*([+-]?\d+(?:\.\d+)?)", value or "")
+    if ratio_match:
+        try:
+            return float(ratio_match.group(1)), float(ratio_match.group(2))
+        except ValueError:
+            return None, None
+    numeric = _parse_numeric_value(value)
+    return numeric, None
+
+
+def _find_detail_index(details: List[Dict[str, Any]], aliases: List[str]) -> int | None:
+    alias_set = {_normalize_lookup_key(alias) for alias in aliases}
+    for index, item in enumerate(details):
+        if not isinstance(item, dict):
+            continue
+        criterion = _get_record_value(item, ["Tiêu chí", "Tieu chi", "Criterion"])
+        if _normalize_lookup_key(criterion) in alias_set:
+            return index
+    return None
 
 
 def _detail_item(title: str, score: str, formula: str, evidence: str, explanation: str) -> Dict[str, str]:
@@ -328,6 +395,29 @@ def _contains_keyword(value: str, keywords: List[str]) -> bool:
     return any(keyword in lower for keyword in keywords)
 
 
+def _prepare_embedding_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip())[:MAX_EMBEDDING_TEXT_LENGTH]
+
+
+def _cosine_similarity(a: List[float], b: List[float]) -> float | None:
+    if not a or not b or len(a) != len(b):
+        return None
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return None
+    return dot / (norm_a * norm_b)
+
+
+def _semantic_similarity_to_job_fit_score(similarity: float) -> float:
+    if similarity <= JD_CV_SIMILARITY_FLOOR:
+        return 0.0
+    span = JD_CV_SIMILARITY_CEILING - JD_CV_SIMILARITY_FLOOR
+    scaled = (similarity - JD_CV_SIMILARITY_FLOOR) / span if span > 0 else similarity
+    return round(max(0.0, min(JD_FIT_MAX_SCORE, scaled * JD_FIT_MAX_SCORE)), 1)
+
+
 def _detect_industry(candidate: Dict[str, Any], hard_filters: Dict[str, Any]) -> Optional[str]:
     values = [
         str(candidate.get("industry", "")),
@@ -352,6 +442,7 @@ def _compute_industry_similarity(
     cv_text: str,
     owner_uid: str | None = None,
     file_name: str | None = None,
+    query_vector: List[float] | None = None,
 ) -> Optional[Dict[str, Any]]:
     result = search_similar_records(
         industry,
@@ -360,6 +451,7 @@ def _compute_industry_similarity(
         min_similarity=0.0,
         owner_uid=owner_uid,
         exclude_file_names=[file_name] if file_name else None,
+        query_vector=query_vector,
     )
     if not result:
         return None
@@ -375,6 +467,126 @@ def _compute_industry_similarity(
     }
 
 
+def _compute_jd_cv_embedding_match(
+    jd_text: str,
+    cv_text: str,
+    *,
+    jd_vector: List[float] | None = None,
+    cv_vector: List[float] | None = None,
+) -> Dict[str, Any] | None:
+    cleaned_jd = _prepare_embedding_text(jd_text)
+    cleaned_cv = _prepare_embedding_text(cv_text)
+    if not cleaned_jd or not cleaned_cv:
+        return None
+
+    settings = get_settings()
+    try:
+        resolved_jd_vector = jd_vector or embed_text(cleaned_jd, settings.gemini_embedding_model)
+        resolved_cv_vector = cv_vector or embed_text(cleaned_cv, settings.gemini_embedding_model)
+    except Exception:
+        return None
+
+    similarity = _cosine_similarity(resolved_jd_vector, resolved_cv_vector)
+    if similarity is None:
+        return None
+
+    return {
+        "similarity": similarity,
+        "weightedScore": _semantic_similarity_to_job_fit_score(similarity),
+        "maxScore": JD_FIT_MAX_SCORE,
+        "queryModel": settings.gemini_embedding_model,
+    }
+
+
+def _upsert_jd_fit_detail(
+    details: List[Dict[str, Any]],
+    *,
+    analysis: Dict[str, Any],
+    candidate: Dict[str, Any],
+    jd_text: str,
+    semantic_match: Dict[str, Any] | None,
+) -> None:
+    detail_index = _find_detail_index(details, JD_FIT_CRITERION_ALIASES)
+    previous_score = 0.0
+    if detail_index is not None:
+        score_text = _get_record_value(details[detail_index], ["Điểm", "Diem", "Score"])
+        previous_score = _parse_detail_score(score_text)[0] or 0.0
+
+    jd_skills = _extract_skills_from_jd(jd_text)
+    candidate_skills = _extract_skills_from_candidate(candidate)
+    skill_match = _score_skill_match(jd_skills, candidate_skills) if jd_skills else {
+        "matchedSkills": [],
+        "unmatchedSkills": [],
+        "transferMatches": [],
+        "familyClusters": [],
+        "matchRate": 0,
+    }
+
+    vector_score = float(semantic_match.get("weightedScore") or 0.0) if semantic_match else 0.0
+    final_score = min(JD_FIT_MAX_SCORE, max(previous_score, vector_score))
+
+    evidence_parts: List[str] = []
+    if skill_match["matchedSkills"]:
+        evidence_parts.append(f"Kỹ năng khớp: {', '.join(skill_match['matchedSkills'][:6])}")
+    if skill_match["transferMatches"]:
+        evidence_parts.append(f"Khớp chuyển đổi: {'; '.join(skill_match['transferMatches'][:3])}")
+    if skill_match["unmatchedSkills"]:
+        evidence_parts.append(f"Còn thiếu: {', '.join(skill_match['unmatchedSkills'][:4])}")
+    if semantic_match:
+        evidence_parts.append(
+            f"Embedding JD/CV {semantic_match['similarity'] * 100:.1f}% ({semantic_match['queryModel']})"
+        )
+    evidence = " | ".join(evidence_parts) or "Chưa có đủ dữ liệu để suy ra phần so khớp JD/CV."
+
+    if semantic_match:
+        explanation = (
+            f"So khớp JD/CV lấy mức cao hơn giữa điểm AI gốc "
+            f"{_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)} và "
+            f"điểm semantic embedding {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}."
+        )
+        formula = (
+            f"max(AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}, "
+            f"Vector semantic {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)})"
+        )
+        candidate["jdCvMatchInsights"] = {
+            "similarity": semantic_match["similarity"],
+            "weightedScore": vector_score,
+            "maxScore": JD_FIT_MAX_SCORE,
+            "queryModel": semantic_match["queryModel"],
+            "matchedSkills": skill_match["matchedSkills"],
+            "missingSkills": skill_match["unmatchedSkills"],
+            "transferMatches": skill_match["transferMatches"],
+        }
+    else:
+        explanation = "Giữ lại điểm Job Fit hiện có vì chưa tạo được semantic embedding ổn định cho JD/CV."
+        formula = f"AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}"
+
+    detail_payload = _detail_item(
+        JD_FIT_CRITERION_LABEL,
+        f"{_format_score_value(final_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}",
+        formula,
+        evidence,
+        explanation,
+    )
+    if detail_index is None:
+        details.insert(0, detail_payload)
+    else:
+        details[detail_index] = detail_payload
+
+    current_total = (
+        _parse_numeric_value(analysis.get("Tổng điểm"))
+        or _parse_numeric_value(analysis.get("Tong diem"))
+        or _parse_numeric_value(analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"))
+        or _parse_numeric_value(analysis.get("TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"))
+    )
+    if current_total is not None:
+        updated_total = max(0.0, min(100.0, current_total + (final_score - previous_score)))
+        analysis["Tổng điểm"] = round(updated_total, 1)
+        analysis["Tong diem"] = round(updated_total, 1)
+        analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tổng điểm"]
+        analysis["TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"] = analysis["Tổng điểm"]
+
+
 def enrich_candidates(
     candidates: List[Dict[str, Any]],
     cv_text_map: Dict[str, str],
@@ -383,6 +595,14 @@ def enrich_candidates(
     owner_uid: str | None = None,
 ) -> List[Dict[str, Any]]:
     enriched: List[Dict[str, Any]] = []
+    settings = get_settings()
+    jd_vector: List[float] | None = None
+    cleaned_jd_for_embedding = _prepare_embedding_text(jd_text)
+    if cleaned_jd_for_embedding:
+        try:
+            jd_vector = embed_text(cleaned_jd_for_embedding, settings.gemini_embedding_model)
+        except Exception:
+            jd_vector = None
     for candidate in candidates:
         cv_text = cv_text_map.get(str(candidate.get("fileName", "")), "")
         analysis = candidate.get("analysis") or {}
@@ -391,6 +611,28 @@ def enrich_candidates(
             details = []
         analysis["Chi tiáº¿t"] = details
         analysis["Chi tiÃ¡ÂºÂ¿t"] = details
+
+        cv_vector: List[float] | None = None
+        if cv_text:
+            cleaned_cv_for_embedding = _prepare_embedding_text(cv_text)
+            if cleaned_cv_for_embedding:
+                try:
+                    cv_vector = embed_text(cleaned_cv_for_embedding, settings.gemini_embedding_model)
+                except Exception:
+                    cv_vector = None
+        semantic_match = _compute_jd_cv_embedding_match(
+            jd_text,
+            cv_text,
+            jd_vector=jd_vector,
+            cv_vector=cv_vector,
+        ) if cv_text else None
+        _upsert_jd_fit_detail(
+            details,
+            analysis=analysis,
+            candidate=candidate,
+            jd_text=jd_text,
+            semantic_match=semantic_match,
+        )
 
         if cv_text:
             debias_result = _run_debiasing(cv_text, hard_filters)
@@ -452,6 +694,7 @@ def enrich_candidates(
                     cv_text,
                     owner_uid=owner_uid,
                     file_name=str(candidate.get("fileName") or ""),
+                    query_vector=cv_vector,
                 )
                 if insight:
                     candidate["embeddingInsights"] = insight
