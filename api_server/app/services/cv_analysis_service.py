@@ -65,6 +65,28 @@ TECH_KEYWORDS = (
     "Google Analytics",
 )
 
+LANGUAGE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "English": ("english", "tieng anh", "anh van"),
+    "IELTS": ("ielts",),
+    "TOEIC": ("toeic",),
+    "TOEFL": ("toefl",),
+    "Japanese": ("japanese", "tieng nhat", "nhat ngu", "jlpt", "n1", "n2", "n3", "n4", "n5"),
+    "JLPT": ("jlpt", "n1", "n2", "n3", "n4", "n5"),
+    "Korean": ("korean", "tieng han", "han ngu", "topik"),
+    "TOPIK": ("topik",),
+}
+
+NEGATION_TERMS = (
+    "khong co",
+    "khong dat",
+    "chua co",
+    "chua dat",
+    "khong biet",
+    "no",
+    "not",
+    "without",
+)
+
 
 def _build_compact_criteria(weights: Dict[str, Any]) -> str:
     lines: List[str] = []
@@ -155,19 +177,63 @@ def _normalize_lookup(value: str) -> str:
     return re.sub(r"[^a-z0-9+#.]+", " ", normalized.lower()).strip()
 
 
-def _contains_keyword(text: str, keyword: str) -> bool:
+def _keyword_aliases(keyword: str) -> tuple[str, ...]:
+    aliases = LANGUAGE_KEYWORDS.get(keyword)
+    if aliases:
+        return aliases
+    normalized = _normalize_lookup(keyword)
+    return (normalized,) if normalized else ()
+
+
+def _has_alias(text: str, keyword: str) -> bool:
     normalized_text = f" {_normalize_lookup(text)} "
-    normalized_keyword = _normalize_lookup(keyword)
-    if not normalized_keyword:
-        return False
-    return f" {normalized_keyword} " in normalized_text or normalized_keyword in normalized_text
+    for alias in _keyword_aliases(keyword):
+        normalized_alias = _normalize_lookup(alias)
+        if normalized_alias and normalized_alias in normalized_text:
+            return True
+    return False
 
 
-def _extract_required_keywords(jd_text: str) -> list[str]:
+def _is_negated_keyword(text: str, keyword: str) -> bool:
+    normalized_text = f" {_normalize_lookup(text)} "
+    for alias in _keyword_aliases(keyword):
+        normalized_alias = _normalize_lookup(alias)
+        if not normalized_alias:
+            continue
+        start = normalized_text.find(normalized_alias)
+        if start < 0:
+            continue
+        prefix = normalized_text[max(0, start - 36) : start]
+        if any(term in prefix for term in NEGATION_TERMS):
+            return True
+    return False
+
+
+def _contains_keyword(text: str, keyword: str) -> bool:
+    return _has_alias(text, keyword) and not _is_negated_keyword(text, keyword)
+
+
+def _is_language_criterion(criterion_name: str) -> bool:
+    normalized = _normalize_lookup(criterion_name)
+    return "ngon ngu" in normalized or "language" in normalized
+
+
+def _is_skill_or_fit_criterion(criterion_name: str) -> bool:
+    normalized = _normalize_lookup(criterion_name)
+    return any(term in normalized for term in ("ky nang", "skill", "job fit", "phu hop jd"))
+
+
+def _extract_required_keywords(jd_text: str, criterion_name: str = "") -> list[str]:
+    if _is_language_criterion(criterion_name):
+        return [keyword for keyword in LANGUAGE_KEYWORDS if _has_alias(jd_text, keyword)]
+
+    if criterion_name and not _is_skill_or_fit_criterion(criterion_name):
+        return []
+
     matches: list[str] = []
     seen: set[str] = set()
     for keyword in TECH_KEYWORDS:
-        if _contains_keyword(jd_text, keyword):
+        if _has_alias(jd_text, keyword):
             key = _normalize_lookup(keyword)
             if key not in seen:
                 seen.add(key)
@@ -189,8 +255,8 @@ def _find_keyword_context(text: str, keyword: str) -> str:
     return ""
 
 
-def _keyword_metrics(jd_text: str, cv_text: str) -> dict[str, Any]:
-    required_keywords = _extract_required_keywords(jd_text)
+def _keyword_metrics(jd_text: str, cv_text: str, criterion_name: str = "") -> dict[str, Any]:
+    required_keywords = _extract_required_keywords(jd_text, criterion_name)
     keyword_rows: list[dict[str, Any]] = []
     matched_count = 0
 
@@ -329,16 +395,29 @@ def _merge_keyword_metrics(existing: Any, computed: dict[str, Any]) -> dict[str,
     }
 
 
+def _is_weak_formula(value: str) -> bool:
+    normalized = _normalize_lookup(value)
+    if not normalized:
+        return True
+    return "trong so" in normalized and not any(symbol in value for symbol in ("-", "+", "="))
+
+
 def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_text: str) -> dict[str, Any]:
     existing = _as_advanced_dict(detail.get("advancedBreakdown") or detail.get("advanced_breakdown"))
+    criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­", "Criterion")
     score_text = _get_detail_value(detail, "Diem", "Điểm", "Äiá»ƒm", "Score")
     formula = _get_detail_value(detail, "Cong thuc", "Công thức", "CÃ´ng thá»©c", "Formula")
     explanation = _get_detail_value(detail, "Giai thich", "Giải thích", "Giáº£i thÃ­ch", "Explanation")
     raw_score, max_score = _parse_score_pair(score_text, formula)
     max_score = max(max_score, raw_score)
     points_lost = max(0, max_score - raw_score)
-    computed_metrics = _keyword_metrics(jd_text, cv_text)
-    metrics = _merge_keyword_metrics(existing.get("keyword_metrics"), computed_metrics)
+    computed_metrics = _keyword_metrics(jd_text, cv_text, criterion_name)
+    if computed_metrics.get("total_required_keywords"):
+        metrics = computed_metrics
+    elif _is_skill_or_fit_criterion(criterion_name) or _is_language_criterion(criterion_name):
+        metrics = _merge_keyword_metrics(existing.get("keyword_metrics"), computed_metrics)
+    else:
+        metrics = computed_metrics
     missing_keywords = [
         str(item.get("keyword"))
         for item in metrics.get("keywords_list", [])
@@ -346,8 +425,8 @@ def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_t
     ]
 
     mathematical_formula = str(existing.get("mathematical_formula") or "").strip()
-    if not mathematical_formula:
-        if formula:
+    if _is_weak_formula(mathematical_formula):
+        if formula and not _is_weak_formula(formula):
             mathematical_formula = formula
         elif points_lost:
             mathematical_formula = f"{max_score}d (toi da) - {points_lost}d (cac diem chua dat) = {raw_score}d"
