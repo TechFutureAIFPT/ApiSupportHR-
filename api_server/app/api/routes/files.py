@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.schemas.files import ExtractedTextResponse
@@ -17,7 +19,8 @@ async def extract_text(
 ) -> ExtractedTextResponse:
     try:
         file_bytes = await file.read()
-        text = extract_text_from_upload(
+        text = await asyncio.to_thread(
+            extract_text_from_upload,
             file_bytes=file_bytes,
             filename=file.filename or "uploaded-file",
             content_type=file.content_type or "",

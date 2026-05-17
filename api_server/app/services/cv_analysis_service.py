@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import unicodedata
@@ -251,7 +252,7 @@ def _create_analysis_prompt(
     )
 
 
-def analyze_cv_entries(
+def _build_prompt_sections(
     jd_text: str,
     weights: Dict[str, Any],
     hard_filters: Dict[str, Any],
@@ -259,8 +260,7 @@ def analyze_cv_entries(
     *,
     entry_contexts: Dict[str, Dict[str, Any]] | None = None,
     context_notes: str = "",
-) -> List[Dict[str, Any]]:
-    settings = get_settings()
+) -> List[str]:
     prompt = _create_analysis_prompt(
         jd_text,
         weights,
@@ -289,8 +289,29 @@ def analyze_cv_entries(
         else:
             prompt_sections.append(f"--- CV: {file_name} ---\n{analysis_text}")
 
+    return prompt_sections
+
+
+def analyze_cv_entries(
+    jd_text: str,
+    weights: Dict[str, Any],
+    hard_filters: Dict[str, Any],
+    cv_entries: List[Dict[str, str]],
+    *,
+    entry_contexts: Dict[str, Dict[str, Any]] | None = None,
+    context_notes: str = "",
+) -> List[Dict[str, Any]]:
+    settings = get_settings()
+    prompt_sections = _build_prompt_sections(
+        jd_text,
+        weights,
+        hard_filters,
+        cv_entries,
+        entry_contexts=entry_contexts,
+        context_notes=context_notes,
+    )
     response_text = generate_content(
-        settings.gemini_default_model,
+        settings.gemini_cv_analysis_model,
         "\n\n".join(prompt_sections),
         {
             "responseMimeType": "application/json",
@@ -301,4 +322,37 @@ def analyze_cv_entries(
         },
     )
 
+    return _post_process_candidates(_extract_json_array(response_text), weights)
+
+
+async def analyze_cv_entries_async(
+    jd_text: str,
+    weights: Dict[str, Any],
+    hard_filters: Dict[str, Any],
+    cv_entries: List[Dict[str, str]],
+    *,
+    entry_contexts: Dict[str, Dict[str, Any]] | None = None,
+    context_notes: str = "",
+) -> List[Dict[str, Any]]:
+    settings = get_settings()
+    prompt_sections = _build_prompt_sections(
+        jd_text,
+        weights,
+        hard_filters,
+        cv_entries,
+        entry_contexts=entry_contexts,
+        context_notes=context_notes,
+    )
+    response_text = await asyncio.to_thread(
+        generate_content,
+        settings.gemini_cv_analysis_model,
+        "\n\n".join(prompt_sections),
+        {
+            "responseMimeType": "application/json",
+            "temperature": 0.1,
+            "topP": 0.8,
+            "topK": 40,
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
+    )
     return _post_process_candidates(_extract_json_array(response_text), weights)

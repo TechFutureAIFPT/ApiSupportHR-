@@ -20,9 +20,19 @@ DEFAULT_WEB_ORIGINS = [
 
 class Settings:
     def __init__(self) -> None:
+        def _float_env(name: str, default: float) -> float:
+            try:
+                return float(os.getenv(name, str(default)))
+            except (TypeError, ValueError):
+                return default
+
         self.app_name = os.getenv("APP_NAME", "SupportHR Backend")
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
         self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.gemini_cv_analysis_model = (
+            os.getenv("GEMINI_CV_ANALYSIS_MODEL", "gemini-1.5-flash").strip()
+            or self.gemini_default_model
+        )
         raw_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "").strip()
         if raw_embedding_model in {"", "text-embedding-004", "models/text-embedding-004"}:
             # Migrate legacy/default values to the current supported Gemini embedding model.
@@ -57,6 +67,14 @@ class Settings:
             os.getenv("VECTOR_STORE_FIRESTORE_COLLECTION", "vectorLibraryRecords").strip()
             or "vectorLibraryRecords"
         )
+        self.approved_exemplars_collection = (
+            os.getenv("APPROVED_EXEMPLARS_COLLECTION", "approvedExemplars").strip()
+            or "approvedExemplars"
+        )
+        self.rubric_version = os.getenv("RUBRIC_VERSION", "v1").strip() or "v1"
+        self.local_classifier_confidence_threshold = _float_env("LOCAL_CLASSIFIER_CONFIDENCE_THRESHOLD", 0.60)
+        self.rag_similarity_threshold = _float_env("RAG_SIMILARITY_THRESHOLD", 0.75)
+        self.rag_max_exemplars = max(1, int(_float_env("RAG_MAX_EXEMPLARS", 2)))
         default_drive_origins = list(dict.fromkeys([self.frontend_origin, *DEFAULT_WEB_ORIGINS]))
         if raw_drive_origins:
             self.google_drive_allowed_origins = list(

@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
 from app.core.config import get_settings
 from app.services.gemini_service import generate_content
+
+try:  # langdetect is intentionally optional at runtime; heuristics stay as fallback.
+    from langdetect import DetectorFactory, LangDetectException, detect_langs
+
+    DetectorFactory.seed = 42
+except Exception:  # pragma: no cover - dependency fallback
+    detect_langs = None
+    LangDetectException = Exception
 
 
 VIETNAMESE_HINTS = {
@@ -73,6 +82,22 @@ def detect_language(text: str) -> dict[str, Any]:
     if not cleaned:
         return {"language": "unknown", "confidence": 0.0, "reason": "empty_text"}
 
+    if detect_langs is not None:
+        try:
+            detections = detect_langs(cleaned[:6000])
+            if detections:
+                best = detections[0]
+                language = "vi" if best.lang == "vi" else "en" if best.lang == "en" else best.lang
+                confidence = round(float(best.prob), 2)
+                if language in {"vi", "en"} and confidence >= 0.55:
+                    return {
+                        "language": language,
+                        "confidence": confidence,
+                        "reason": "langdetect",
+                    }
+        except LangDetectException:
+            pass
+
     if VIETNAMESE_DIACRITICS_PATTERN.search(cleaned):
         return {"language": "vi", "confidence": 0.99, "reason": "vietnamese_diacritics"}
 
@@ -125,6 +150,10 @@ def translate_to_vietnamese(text: str) -> str:
     )
 
 
+async def translate_to_vietnamese_async(text: str) -> str:
+    return await asyncio.to_thread(translate_to_vietnamese, text)
+
+
 def normalize_cv_text_for_analysis(cv_text: str) -> dict[str, Any]:
     original_text = _clean_text(cv_text)
     detection = detect_language(original_text)
@@ -142,6 +171,35 @@ def normalize_cv_text_for_analysis(cv_text: str) -> dict[str, Any]:
         "original_text": original_text,
         "analysis_text": analysis_text,
         "translated_text": translated_text,
+        "normalized_vi_text": analysis_text,
+        "language": detection["language"],
+        "language_confidence": detection["confidence"],
+        "language_reason": detection["reason"],
+        "was_translated": was_translated,
+    }
+
+
+async def normalize_cv_text_for_analysis_async(cv_text: str) -> dict[str, Any]:
+    original_text = _clean_text(cv_text)
+    detection = detect_language(original_text)
+    translated_text = ""
+    analysis_text = original_text
+    was_translated = False
+
+    if detection["language"] == "en":
+        try:
+            translated_text = await translate_to_vietnamese_async(original_text)
+        except Exception:
+            translated_text = ""
+        if translated_text:
+            analysis_text = translated_text
+            was_translated = True
+
+    return {
+        "original_text": original_text,
+        "analysis_text": analysis_text,
+        "translated_text": translated_text,
+        "normalized_vi_text": analysis_text,
         "language": detection["language"],
         "language_confidence": detection["confidence"],
         "language_reason": detection["reason"],

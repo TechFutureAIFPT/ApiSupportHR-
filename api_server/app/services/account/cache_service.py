@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -10,6 +13,20 @@ from app.services.account.shared import serialize, sorted_docs
 
 MAX_CACHE_ENTRIES_PER_USER = 50
 CACHE_EXPIRY_DAYS = 30
+
+
+def stable_hash(value: Any) -> str:
+    if isinstance(value, str):
+        normalized = value.strip()
+    else:
+        normalized = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def build_cv_jd_cache_key(cv_id: str, jd_text: str) -> str:
+    normalized_cv_id = str(cv_id or "").strip()
+    normalized_jd = str(jd_text or "").strip()
+    return stable_hash(f"{normalized_cv_id}::{normalized_jd}")
 
 
 def sync_cache_entry(
@@ -59,6 +76,31 @@ def get_cache_entry(user: AuthenticatedUser, cache_key: str) -> dict[str, Any] |
         return None
 
     return serialize(data.get("candidateData"))
+
+
+async def get_cache_entry_async(user: AuthenticatedUser, cache_key: str) -> dict[str, Any] | None:
+    return await asyncio.to_thread(get_cache_entry, user, cache_key)
+
+
+async def sync_cache_entry_async(
+    user: AuthenticatedUser,
+    cache_key: str,
+    candidate_data: dict[str, Any],
+    jd_hash: str,
+    weights_hash: str,
+    filters_hash: str,
+    file_info: dict[str, Any],
+) -> None:
+    await asyncio.to_thread(
+        sync_cache_entry,
+        user,
+        cache_key,
+        candidate_data,
+        jd_hash,
+        weights_hash,
+        filters_hash,
+        file_info,
+    )
 
 
 def get_all_user_cache(user: AuthenticatedUser) -> dict[str, Any]:

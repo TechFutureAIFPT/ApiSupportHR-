@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field
 class CvTextEntry(BaseModel):
     file_name: str = Field(min_length=1)
     text: str = Field(min_length=1)
+    cv_id: str | None = None
+    file_id: str | None = None
+    id: str | None = None
+    size: int | None = None
+    last_modified: int | None = None
 
 
 class CoreCvAnalysisRequest(BaseModel):
@@ -19,6 +24,7 @@ class CoreCvAnalysisRequest(BaseModel):
 
 class CoreCvAnalysisResponse(BaseModel):
     candidates: List[Dict[str, Any]]
+    pipeline: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CvProfileRefineRequest(BaseModel):

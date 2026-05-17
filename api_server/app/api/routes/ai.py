@@ -86,18 +86,21 @@ def interview_questions(payload: InterviewQuestionsRequest) -> InterviewQuestion
 
 
 @router.post("/cv/analyze-core", response_model=CoreCvAnalysisResponse)
-def cv_analyze_core(
+async def cv_analyze_core(
     payload: CoreCvAnalysisRequest,
     current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
 ) -> CoreCvAnalysisResponse:
-    candidates = run_smart_cv_analysis(
+    result = await run_smart_cv_analysis(
         payload.jd_text,
         payload.weights,
         payload.hard_filters,
         [entry.model_dump() for entry in payload.cv_entries],
         current_user=current_user,
     )
-    return CoreCvAnalysisResponse(candidates=candidates)
+    return CoreCvAnalysisResponse(
+        candidates=result.get("candidates") or [],
+        pipeline=result.get("pipeline") or {},
+    )
 
 
 @router.post("/cv/refine-profile", response_model=CvProfileRefineResponse)
