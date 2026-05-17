@@ -4,6 +4,7 @@ import asyncio
 import copy
 import re
 import time
+import unicodedata
 from typing import Any
 
 from app.core.config import get_settings
@@ -23,10 +24,24 @@ from app.services.language_service import build_analysis_text_bundle, normalize_
 
 TOTAL_SCORE_KEY = "T\u1ed5ng \u0111i\u1ec3m"
 RANK_KEY = "H\u1ea1ng"
+LOCATION_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Remote", (r"\bremote\b", r"\bwork from home\b", r"\bwfh\b", "lam viec tu xa", "tu xa")),
+    ("Ha Noi", ("ha noi", "hanoi")),
+    ("Thanh pho Ho Chi Minh", ("ho chi minh", "hcm", "tp hcm", "tphcm", "sai gon", "saigon")),
+    ("Da Nang", ("da nang", "danang")),
+    ("Hai Phong", ("hai phong", "haiphong")),
+)
 
 
 def _normalize_file_name(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip()).lower()
+
+
+def _normalize_ascii(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    normalized = normalized.replace("\u0111", "d").replace("\u0110", "d")
+    return re.sub(r"[^a-z0-9]+", " ", normalized.lower()).strip()
 
 
 def _entry_file_name(entry: dict[str, Any]) -> str:
@@ -67,6 +82,77 @@ def _candidate_total_score(candidate: dict[str, Any]) -> float:
                 except ValueError:
                     continue
     return -1.0
+
+
+def _infer_location_from_text(text: str) -> str:
+    normalized = _normalize_ascii(text)
+    if not normalized:
+        return ""
+
+    for canonical, patterns in LOCATION_PATTERNS:
+        for pattern in patterns:
+            if pattern.startswith(r"\b"):
+                if re.search(pattern, normalized):
+                    return canonical
+            elif pattern in normalized:
+                return canonical
+    return ""
+
+
+def _canonical_location(value: str) -> str:
+    normalized = _normalize_ascii(value)
+    if not normalized:
+        return ""
+    for canonical, patterns in LOCATION_PATTERNS:
+        canonical_normalized = _normalize_ascii(canonical)
+        if normalized == canonical_normalized:
+            return canonical
+        if any(pattern.startswith(r"\b") and re.search(pattern, normalized) for pattern in patterns):
+            return canonical
+        if any(not pattern.startswith(r"\b") and pattern in normalized for pattern in patterns):
+            return canonical
+    return value.strip()
+
+
+def _locations_match(candidate_location: str, required_location: str) -> bool | None:
+    if not candidate_location or not required_location:
+        return None
+    return _canonical_location(candidate_location) == _canonical_location(required_location)
+
+
+def _ensure_detected_location(
+    candidate: dict[str, Any],
+    *,
+    cv_text: str,
+    required_location: str,
+) -> dict[str, Any]:
+    detected = str(candidate.get("detectedLocation") or "").strip()
+    if not detected:
+        detected = _infer_location_from_text(cv_text)
+        if detected:
+            candidate["detectedLocation"] = detected
+            candidate["detectedLocationSource"] = "cv_text_regex"
+
+    location_match = _locations_match(detected, required_location)
+    if location_match is not None:
+        candidate["locationMatch"] = location_match
+        if not location_match:
+            warnings = candidate.get("softFilterWarnings")
+            if not isinstance(warnings, list):
+                warnings = []
+            warning = f"Dia diem CV ({detected}) khong khop yeu cau JD ({required_location})."
+            if warning not in warnings:
+                warnings.append(warning)
+            candidate["softFilterWarnings"] = warnings
+
+    metadata = candidate.get("pipelineMetadata") if isinstance(candidate.get("pipelineMetadata"), dict) else {}
+    candidate["pipelineMetadata"] = {
+        **metadata,
+        "detectedLocation": detected,
+        "locationRequirement": required_location,
+        "locationMatch": location_match,
+    }
+    return candidate
 
 
 def _ensure_final_rank(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -221,10 +307,13 @@ async def run_smart_cv_analysis(
     miss_entries: list[dict[str, Any]] = []
     metadata_by_file: dict[str, dict[str, Any]] = {}
     cache_plan_by_file: dict[str, dict[str, Any]] = {}
+    raw_text_by_file: dict[str, str] = {}
+    required_location = str(hard_filters.get("location") or hard_filters.get("locationRequirement") or "").strip()
 
     for entry in cv_entries:
         file_name = _entry_file_name(entry)
         file_key = _normalize_file_name(file_name)
+        raw_text_by_file[file_key] = str(entry.get("text") or "")
         cache_key, cached, cache_error = await _read_cache_for_entry(
             user=current_user,
             entry=entry,
@@ -332,6 +421,7 @@ async def run_smart_cv_analysis(
                 "groundingExampleCount": len(grounding_payload.get("exemplars") or []),
                 "ragSimilarityGate": grounding_payload.get("similarity_gate"),
                 "ragEmbeddingModel": grounding_payload.get("embedding_model"),
+                "detectedLocation": _infer_location_from_text(raw_text),
             }
 
         try:
@@ -370,6 +460,11 @@ async def run_smart_cv_analysis(
         for candidate in generated_candidates:
             file_key = _candidate_file_key(candidate)
             _attach_pipeline_metadata(candidate, metadata_by_file, cache_hit=False)
+            _ensure_detected_location(
+                candidate,
+                cv_text=raw_text_by_file.get(file_key, ""),
+                required_location=required_location,
+            )
             _ensure_final_rank(candidate)
 
         if current_user:
@@ -400,6 +495,12 @@ async def run_smart_cv_analysis(
 
     candidates = [*cached_candidates, *generated_candidates]
     for candidate in candidates:
+        file_key = _candidate_file_key(candidate)
+        _ensure_detected_location(
+            candidate,
+            cv_text=raw_text_by_file.get(file_key, ""),
+            required_location=required_location,
+        )
         _ensure_final_rank(candidate)
     candidates.sort(key=lambda candidate: (_candidate_total_score(candidate), str(candidate.get("fileName") or "")), reverse=True)
 
