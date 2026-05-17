@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any, Dict, List
 
 from app.core.config import get_settings
@@ -30,6 +31,42 @@ def _format_jd_sections(data: Dict[str, Any]) -> str:
     if (data.get("YeuCauCongViec") or "").strip():
         sections.append(f"YEU CAU CONG VIEC\n{data['YeuCauCongViec'].strip()}")
     return "\n\n".join(sections).strip()
+
+
+def _normalize_ascii(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    normalized = normalized.replace("đ", "d").replace("Đ", "d")
+    return re.sub(r"[^a-z0-9]+", " ", normalized.lower()).strip()
+
+
+def _normalize_location_text(value: str) -> str:
+    location = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not location:
+        return ""
+
+    location_map = {
+        "hn": "Ha Noi",
+        "hanoi": "Ha Noi",
+        "ha noi": "Ha Noi",
+        "hcm": "Thanh pho Ho Chi Minh",
+        "tp hcm": "Thanh pho Ho Chi Minh",
+        "tphcm": "Thanh pho Ho Chi Minh",
+        "tp ho chi minh": "Thanh pho Ho Chi Minh",
+        "ho chi minh": "Thanh pho Ho Chi Minh",
+        "sai gon": "Thanh pho Ho Chi Minh",
+        "saigon": "Thanh pho Ho Chi Minh",
+        "da nang": "Da Nang",
+        "danang": "Da Nang",
+        "hai phong": "Hai Phong",
+        "haiphong": "Hai Phong",
+        "wfh": "Remote",
+        "work from home": "Remote",
+        "lam viec tu xa": "Remote",
+        "tu xa": "Remote",
+        "remote": "Remote",
+    }
+    return location_map.get(_normalize_ascii(location), location[:120])
 
 
 def structure_jd(raw_text: str) -> str:
@@ -136,22 +173,10 @@ def extract_hard_filters(jd_text: str) -> Dict[str, str]:
 
     validated: Dict[str, str] = {}
 
-    valid_locations = {"Ha Noi", "Hai Phong", "Da Nang", "Thanh pho Ho Chi Minh", "Remote"}
-    location_map = {
-        "HN": "Ha Noi",
-        "Hanoi": "Ha Noi",
-        "Ha Noi": "Ha Noi",
-        "HCM": "Thanh pho Ho Chi Minh",
-        "TP.HCM": "Thanh pho Ho Chi Minh",
-        "Ho Chi Minh": "Thanh pho Ho Chi Minh",
-        "Da Nang": "Da Nang",
-        "WFH": "Remote",
-    }
     location = str(data.get("location", "")).strip()
-    if location in valid_locations:
-        validated["location"] = location
-    elif location in location_map:
-        validated["location"] = location_map[location]
+    normalized_location = _normalize_location_text(location)
+    if normalized_location:
+        validated["location"] = normalized_location
 
     min_exp = str(data.get("minExp", "")).strip()
     if min_exp:

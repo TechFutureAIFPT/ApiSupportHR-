@@ -117,7 +117,19 @@ def _canonical_location(value: str) -> str:
 def _locations_match(candidate_location: str, required_location: str) -> bool | None:
     if not candidate_location or not required_location:
         return None
-    return _canonical_location(candidate_location) == _canonical_location(required_location)
+    candidate_raw = _normalize_ascii(candidate_location)
+    required_raw = _normalize_ascii(required_location)
+    if candidate_raw and required_raw and (candidate_raw == required_raw or required_raw in candidate_raw or candidate_raw in required_raw):
+        return True
+    candidate = _normalize_ascii(_canonical_location(candidate_location))
+    required = _normalize_ascii(_canonical_location(required_location))
+    if not candidate or not required:
+        return None
+    if candidate == required:
+        return True
+    if required in candidate or candidate in required:
+        return True
+    return False
 
 
 def _ensure_detected_location(
@@ -140,7 +152,7 @@ def _ensure_detected_location(
             warnings = candidate.get("softFilterWarnings")
             if not isinstance(warnings, list):
                 warnings = []
-            warning = f"Dia diem CV ({detected}) khong khop yeu cau JD ({required_location})."
+            warning = f"Cảnh báo địa điểm: CV ghi {detected}, khác địa điểm làm việc yêu cầu ({required_location})."
             if warning not in warnings:
                 warnings.append(warning)
             candidate["softFilterWarnings"] = warnings
