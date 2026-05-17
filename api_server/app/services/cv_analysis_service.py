@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import unicodedata
 from typing import Any, Dict, List
@@ -168,6 +169,104 @@ def _format_score_value(value: float) -> str:
 
 def _analysis_response_schema() -> dict[str, Any]:
     return StructuredCandidateOutputList.model_json_schema(by_alias=True)
+
+
+def _to_float_vector(value: Any) -> list[float]:
+    if not isinstance(value, list):
+        return []
+    vector: list[float] = []
+    for item in value:
+        try:
+            vector.append(float(item))
+        except (TypeError, ValueError):
+            return []
+    return vector
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right, strict=False))
+    left_norm = math.sqrt(sum(a * a for a in left))
+    right_norm = math.sqrt(sum(b * b for b in right))
+    if left_norm <= 0 or right_norm <= 0:
+        return 0.0
+    return dot / (left_norm * right_norm)
+
+
+def _extract_exemplar_embedding(record: dict[str, Any]) -> list[float]:
+    for key in ("embedding", "embeddingVector", "cv_embedding", "redacted_cv_embedding"):
+        vector = _to_float_vector(record.get(key))
+        if vector:
+            return vector
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("embedding", "vector"):
+            vector = _to_float_vector(metadata.get(key))
+            if vector:
+                return vector
+    return []
+
+
+def _format_rag_exemplar(record: dict[str, Any], similarity: float) -> dict[str, Any]:
+    return {
+        "industry": str(record.get("industry") or "Unknown"),
+        "seniority": str(record.get("seniority") or "Junior"),
+        "redacted_cv_text": str(record.get("redacted_cv_text") or record.get("redactedCvText") or ""),
+        "jd_snapshot": str(record.get("jd_snapshot") or record.get("jdSnapshot") or ""),
+        "analysis_json": record.get("analysis_json") if isinstance(record.get("analysis_json"), dict) else {},
+        "similarity": round(float(similarity), 4),
+        "source_dataset": str(record.get("source_dataset") or "kaggle-job-resume-fit"),
+    }
+
+
+async def get_rag_exemplars(
+    predicted_industry: str,
+    predicted_seniority: str,
+    cv_embedding: list,
+) -> list[dict[str, Any]]:
+    """Fetch approved few-shot exemplars with strict metadata filters and a similarity gate.
+
+    This function is intentionally defensive: any Firestore, schema, or vector issue returns
+    an empty list so the caller can continue with the normal zero-shot scoring flow.
+    """
+    industry = str(predicted_industry or "").strip()
+    seniority = str(predicted_seniority or "").strip()
+    query_vector = _to_float_vector(cv_embedding)
+    if not industry or not seniority or not query_vector:
+        return []
+
+    settings = get_settings()
+    collection_name = settings.approved_exemplars_collection or "approvedExemplars"
+
+    def _query_firestore() -> list[dict[str, Any]]:
+        from app.integrations.firebase_admin import get_firestore_client
+
+        client = get_firestore_client()
+        query = (
+            client.collection(collection_name)
+            .where("industry", "==", industry)
+            .where("seniority", "==", seniority)
+            .limit(2)
+        )
+        return [snapshot.to_dict() or {} for snapshot in query.stream()]
+
+    try:
+        records = await asyncio.to_thread(_query_firestore)
+    except Exception as error:  # pragma: no cover - runtime fallback path
+        print(f"[RAG Exemplars] Firestore query failed: {error}")
+        return []
+
+    gated: list[dict[str, Any]] = []
+    for record in records:
+        exemplar_vector = _extract_exemplar_embedding(record)
+        similarity = _cosine_similarity(query_vector, exemplar_vector)
+        if similarity > 0.75:
+            formatted = _format_rag_exemplar(record, similarity)
+            if formatted["redacted_cv_text"] and formatted["jd_snapshot"]:
+                gated.append(formatted)
+
+    return sorted(gated, key=lambda item: item["similarity"], reverse=True)[:2]
 
 
 def _normalize_lookup(value: str) -> str:

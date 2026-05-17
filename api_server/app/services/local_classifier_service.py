@@ -101,7 +101,12 @@ def classify_cv_text(cv_text: str, top_k: int = 3) -> dict[str, Any]:
     except Exception as error:  # pragma: no cover - defensive path for runtime failures
         raise RuntimeError(f"Failed to run local classifier prediction: {error}") from error
 
-    top_predictions = _rank_predictions(model, cleaned_text, top_k=top_k)
+    try:
+        top_predictions = _rank_predictions(model, cleaned_text, top_k=top_k)
+    except Exception:
+        # A model can still predict labels even when probability helpers break
+        # because of scikit-learn version drift between training and serving.
+        top_predictions = []
     confidence = next(
         (prediction["score"] for prediction in top_predictions if prediction["label"] == predicted_label),
         None,
