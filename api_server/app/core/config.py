@@ -22,7 +22,7 @@ class Settings:
     def __init__(self) -> None:
         self.app_name = os.getenv("APP_NAME", "SupportHR Backend")
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
-        self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+        self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         raw_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "").strip()
         if raw_embedding_model in {"", "text-embedding-004", "models/text-embedding-004"}:
             # Migrate legacy/default values to the current supported Gemini embedding model.

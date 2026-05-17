@@ -41,6 +41,8 @@ def _get_keys() -> List[str]:
 
 def _fallback_models(model: str) -> Iterable[str]:
     yield model
+    if model != "gemini-2.5-flash":
+        yield "gemini-2.5-flash"
     if model != "gemini-flash-latest":
         yield "gemini-flash-latest"
 
