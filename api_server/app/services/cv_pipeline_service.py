@@ -18,7 +18,7 @@ from app.services.account.cache_service import (
 from app.services.account.history_service import sync_history_entry
 from app.services.analysis_grounding_service import build_approved_grounding_context
 from app.services.candidate_enrichment_service import enrich_candidates
-from app.services.cv_analysis_service import analyze_cv_entries_async
+from app.services.cv_analysis_service import analyze_cv_entries_async, attach_advanced_score_breakdowns
 from app.services.language_service import build_analysis_text_bundle, normalize_cv_text_for_analysis_async
 
 
@@ -308,12 +308,14 @@ async def run_smart_cv_analysis(
     metadata_by_file: dict[str, dict[str, Any]] = {}
     cache_plan_by_file: dict[str, dict[str, Any]] = {}
     raw_text_by_file: dict[str, str] = {}
+    cv_text_by_file_name: dict[str, str] = {}
     required_location = str(hard_filters.get("location") or hard_filters.get("locationRequirement") or "").strip()
 
     for entry in cv_entries:
         file_name = _entry_file_name(entry)
         file_key = _normalize_file_name(file_name)
         raw_text_by_file[file_key] = str(entry.get("text") or "")
+        cv_text_by_file_name[file_name] = raw_text_by_file[file_key]
         cache_key, cached, cache_error = await _read_cache_for_entry(
             user=current_user,
             entry=entry,
@@ -467,6 +469,8 @@ async def run_smart_cv_analysis(
             )
             _ensure_final_rank(candidate)
 
+        generated_candidates = attach_advanced_score_breakdowns(generated_candidates, cv_text_by_file_name, jd_text)
+
         if current_user:
             jd_hash = stable_hash(jd_text)
             weights_hash = stable_hash(weights)
@@ -494,6 +498,7 @@ async def run_smart_cv_analysis(
                     )
 
     candidates = [*cached_candidates, *generated_candidates]
+    candidates = attach_advanced_score_breakdowns(candidates, cv_text_by_file_name, jd_text)
     for candidate in candidates:
         file_key = _candidate_file_key(candidate)
         _ensure_detected_location(

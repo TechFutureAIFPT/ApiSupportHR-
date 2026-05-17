@@ -16,7 +16,16 @@ def _camel_to_snake(value: str) -> str:
 
 def _normalize_config(value: Any) -> Any:
     if isinstance(value, dict):
-        return {_camel_to_snake(key): _normalize_config(inner) for key, inner in value.items()}
+        normalized: Dict[str, Any] = {}
+        for key, inner in value.items():
+            normalized_key = _camel_to_snake(key)
+            if normalized_key == "response_schema":
+                # The schema contains output field names such as candidateName.
+                # Do not snake_case nested JSON Schema properties.
+                normalized[normalized_key] = inner
+            else:
+                normalized[normalized_key] = _normalize_config(inner)
+        return normalized
     if isinstance(value, list):
         return [_normalize_config(item) for item in value]
     return value

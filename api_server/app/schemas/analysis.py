@@ -1,8 +1,81 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
+
+
+class PointDeduction(BaseModel):
+    reason: str = ""
+    points_lost: int = 0
+
+
+class KeywordAnalysis(BaseModel):
+    keyword: str = ""
+    status: Literal["matched", "missing"] = "missing"
+    context_sentence: str = ""
+
+
+class SkillKeywordMetrics(BaseModel):
+    total_required_keywords: int = 0
+    matched_keywords_count: int = 0
+    match_percentage: float = 0.0
+    keywords_list: List[KeywordAnalysis] = Field(default_factory=list)
+
+
+class AdvancedScoreBreakdown(BaseModel):
+    max_possible_score: int = 0
+    raw_score_earned: int = 0
+    mathematical_formula: str = ""
+    deductions: List[PointDeduction] = Field(default_factory=list)
+    bonuses_earned: List[str] = Field(default_factory=list)
+    keyword_metrics: SkillKeywordMetrics = Field(default_factory=SkillKeywordMetrics)
+
+
+class StructuredDetailScore(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    criterion: str = Field(default="", alias="Tieu chi")
+    score: str = Field(default="", alias="Diem")
+    formula: str = Field(default="", alias="Cong thuc")
+    evidence: str = Field(default="", alias="Dan chung")
+    explanation: str = Field(default="", alias="Giai thich")
+    advanced_breakdown: AdvancedScoreBreakdown = Field(
+        default_factory=AdvancedScoreBreakdown,
+        alias="advancedBreakdown",
+    )
+
+
+class StructuredCandidateAnalysis(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    total_score: float = Field(default=0, alias="Tong diem")
+    rank: Literal["A", "B", "C"] = Field(default="C", alias="Hang")
+    details: List[StructuredDetailScore] = Field(default_factory=list, alias="Chi tiet")
+    strengths: List[str] = Field(default_factory=list, alias="Diem manh CV")
+    weaknesses: List[str] = Field(default_factory=list, alias="Diem yeu CV")
+    education_validation: Dict[str, Any] = Field(default_factory=dict, alias="educationValidation")
+
+
+class StructuredCandidateOutput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    candidateName: str = ""
+    phone: str = ""
+    email: str = ""
+    fileName: str = ""
+    jobTitle: str = ""
+    industry: str = ""
+    department: str = ""
+    experienceLevel: str = ""
+    hardFilterFailureReason: str = ""
+    softFilterWarnings: List[str] = Field(default_factory=list)
+    detectedLocation: str = ""
+    analysis: StructuredCandidateAnalysis = Field(default_factory=StructuredCandidateAnalysis)
+
+
+class StructuredCandidateOutputList(RootModel[List[StructuredCandidateOutput]]):
+    pass
 
 
 class CvTextEntry(BaseModel):

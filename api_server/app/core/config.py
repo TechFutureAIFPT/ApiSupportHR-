@@ -30,7 +30,7 @@ class Settings:
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
         self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.gemini_cv_analysis_model = (
-            os.getenv("GEMINI_CV_ANALYSIS_MODEL", "gemini-1.5-flash").strip()
+            os.getenv("GEMINI_CV_ANALYSIS_MODEL", "gemini-2.5-flash").strip()
             or self.gemini_default_model
         )
         raw_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "").strip()

@@ -8,11 +8,62 @@ from typing import Any, Dict, List
 
 from app.core.config import get_settings
 from app.prompts import render_prompt
+from app.schemas.analysis import StructuredCandidateOutputList
 from app.services.gemini_service import generate_content
 
 
 MISSING_DETAIL_EVIDENCE = "AI chua tra ve dan chung cu the cho tieu chi nay."
 MISSING_DETAIL_EXPLANATION = "AI chua tra ve phan tich chi tiet cho tieu chi nay."
+TECH_KEYWORDS = (
+    "React",
+    "Next.js",
+    "Vue",
+    "Angular",
+    "Node.js",
+    "Express",
+    "NestJS",
+    "Python",
+    "FastAPI",
+    "Django",
+    "Flask",
+    "Java",
+    "Spring",
+    "C#",
+    ".NET",
+    "Go",
+    "Golang",
+    "TypeScript",
+    "JavaScript",
+    "HTML",
+    "CSS",
+    "Tailwind",
+    "GraphQL",
+    "REST API",
+    "SQL",
+    "PostgreSQL",
+    "MySQL",
+    "MongoDB",
+    "Redis",
+    "Docker",
+    "Kubernetes",
+    "AWS",
+    "GCP",
+    "Azure",
+    "CI/CD",
+    "Git",
+    "Machine Learning",
+    "Deep Learning",
+    "NLP",
+    "TensorFlow",
+    "PyTorch",
+    "Pandas",
+    "Scikit-learn",
+    "Power BI",
+    "Tableau",
+    "Figma",
+    "SEO",
+    "Google Analytics",
+)
 
 
 def _build_compact_criteria(weights: Dict[str, Any]) -> str:
@@ -93,6 +144,77 @@ def _format_score_value(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
+def _analysis_response_schema() -> dict[str, Any]:
+    return StructuredCandidateOutputList.model_json_schema(by_alias=True)
+
+
+def _normalize_lookup(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    normalized = normalized.replace("đ", "d").replace("Đ", "d")
+    return re.sub(r"[^a-z0-9+#.]+", " ", normalized.lower()).strip()
+
+
+def _contains_keyword(text: str, keyword: str) -> bool:
+    normalized_text = f" {_normalize_lookup(text)} "
+    normalized_keyword = _normalize_lookup(keyword)
+    if not normalized_keyword:
+        return False
+    return f" {normalized_keyword} " in normalized_text or normalized_keyword in normalized_text
+
+
+def _extract_required_keywords(jd_text: str) -> list[str]:
+    matches: list[str] = []
+    seen: set[str] = set()
+    for keyword in TECH_KEYWORDS:
+        if _contains_keyword(jd_text, keyword):
+            key = _normalize_lookup(keyword)
+            if key not in seen:
+                seen.add(key)
+                matches.append(keyword)
+    return matches[:24]
+
+
+def _find_keyword_context(text: str, keyword: str) -> str:
+    if not text or not keyword:
+        return ""
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+|[•;]", text)
+        if sentence.strip()
+    ]
+    for sentence in sentences:
+        if _contains_keyword(sentence, keyword):
+            return sentence[:260]
+    return ""
+
+
+def _keyword_metrics(jd_text: str, cv_text: str) -> dict[str, Any]:
+    required_keywords = _extract_required_keywords(jd_text)
+    keyword_rows: list[dict[str, Any]] = []
+    matched_count = 0
+
+    for keyword in required_keywords:
+        matched = _contains_keyword(cv_text, keyword)
+        if matched:
+            matched_count += 1
+        keyword_rows.append(
+            {
+                "keyword": keyword,
+                "status": "matched" if matched else "missing",
+                "context_sentence": _find_keyword_context(cv_text, keyword) if matched else "",
+            }
+        )
+
+    total = len(required_keywords)
+    return {
+        "total_required_keywords": total,
+        "matched_keywords_count": matched_count,
+        "match_percentage": round((matched_count / total) * 100, 1) if total else 0.0,
+        "keywords_list": keyword_rows,
+    }
+
+
 def _extract_numeric_score(value: str) -> float | None:
     match = re.search(r"[+-]?\d+(?:\.\d+)?", value or "")
     if not match:
@@ -101,6 +223,157 @@ def _extract_numeric_score(value: str) -> float | None:
         return float(match.group(0))
     except ValueError:
         return None
+
+
+def _parse_score_pair(score_text: str, formula_text: str = "") -> tuple[int, int]:
+    ratio_match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*/\s*([+-]?\d+(?:\.\d+)?)", score_text or "")
+    if ratio_match:
+        try:
+            return max(0, round(float(ratio_match.group(1)))), max(0, round(float(ratio_match.group(2))))
+        except ValueError:
+            pass
+
+    raw = _extract_numeric_score(score_text) or 0.0
+    max_match = re.search(r"(?:/|max|toi da|tối đa)\s*([+-]?\d+(?:\.\d+)?)", formula_text or "", flags=re.I)
+    max_score = raw
+    if max_match:
+        try:
+            max_score = float(max_match.group(1))
+        except ValueError:
+            max_score = raw
+    return max(0, round(raw)), max(0, round(max_score or raw))
+
+
+def _as_advanced_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_deductions(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    deductions: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        reason = str(item.get("reason") or "").strip()
+        points_lost = int(_extract_numeric_score(str(item.get("points_lost") or item.get("pointsLost") or 0)) or 0)
+        if reason or points_lost:
+            deductions.append({"reason": reason, "points_lost": max(0, points_lost)})
+    return deductions
+
+
+def _as_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _build_deductions(
+    *,
+    points_lost: int,
+    missing_keywords: list[str],
+    explanation: str,
+) -> list[dict[str, Any]]:
+    if points_lost <= 0:
+        return []
+    if missing_keywords:
+        per_keyword = max(1, round(points_lost / max(1, len(missing_keywords))))
+        remaining = points_lost
+        deductions: list[dict[str, Any]] = []
+        for keyword in missing_keywords[:8]:
+            lost = min(per_keyword, remaining)
+            remaining -= lost
+            deductions.append(
+                {
+                    "reason": f"Thieu tu khoa cot loi trong JD: {keyword}",
+                    "points_lost": lost,
+                }
+            )
+            if remaining <= 0:
+                break
+        if remaining > 0:
+            deductions.append({"reason": explanation or "Chua du bang chung de dat diem toi da.", "points_lost": remaining})
+        return deductions
+    return [{"reason": explanation or "Chua du bang chung de dat diem toi da.", "points_lost": points_lost}]
+
+
+def _build_bonus_notes(formula: str, explanation: str) -> list[str]:
+    combined = f"{formula} {explanation}".strip()
+    normalized = _normalize_lookup(combined)
+    if any(token in normalized for token in ("bonus", "cong diem", "diem cong", "boost", "multiplier")) or "+" in combined:
+        return [combined[:220]]
+    return []
+
+
+def _merge_keyword_metrics(existing: Any, computed: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(existing, dict):
+        return computed
+    keywords = existing.get("keywords_list")
+    if not isinstance(keywords, list) or not keywords:
+        return computed
+    total = int(existing.get("total_required_keywords") or len(keywords) or 0)
+    matched = int(existing.get("matched_keywords_count") or sum(1 for item in keywords if isinstance(item, dict) and item.get("status") == "matched"))
+    return {
+        "total_required_keywords": total,
+        "matched_keywords_count": matched,
+        "match_percentage": float(existing.get("match_percentage") or (matched / total * 100 if total else 0)),
+        "keywords_list": [
+            {
+                "keyword": str(item.get("keyword") or "").strip(),
+                "status": "matched" if item.get("status") == "matched" else "missing",
+                "context_sentence": str(item.get("context_sentence") or "").strip(),
+            }
+            for item in keywords
+            if isinstance(item, dict) and str(item.get("keyword") or "").strip()
+        ],
+    }
+
+
+def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_text: str) -> dict[str, Any]:
+    existing = _as_advanced_dict(detail.get("advancedBreakdown") or detail.get("advanced_breakdown"))
+    score_text = _get_detail_value(detail, "Diem", "Điểm", "Äiá»ƒm", "Score")
+    formula = _get_detail_value(detail, "Cong thuc", "Công thức", "CÃ´ng thá»©c", "Formula")
+    explanation = _get_detail_value(detail, "Giai thich", "Giải thích", "Giáº£i thÃ­ch", "Explanation")
+    raw_score, max_score = _parse_score_pair(score_text, formula)
+    max_score = max(max_score, raw_score)
+    points_lost = max(0, max_score - raw_score)
+    computed_metrics = _keyword_metrics(jd_text, cv_text)
+    metrics = _merge_keyword_metrics(existing.get("keyword_metrics"), computed_metrics)
+    missing_keywords = [
+        str(item.get("keyword"))
+        for item in metrics.get("keywords_list", [])
+        if isinstance(item, dict) and item.get("status") == "missing"
+    ]
+
+    mathematical_formula = str(existing.get("mathematical_formula") or "").strip()
+    if not mathematical_formula:
+        if formula:
+            mathematical_formula = formula
+        elif points_lost:
+            mathematical_formula = f"{max_score}d (toi da) - {points_lost}d (cac diem chua dat) = {raw_score}d"
+        else:
+            mathematical_formula = f"{max_score}d (toi da) - 0d = {raw_score}d"
+
+    deductions = _as_deductions(existing.get("deductions"))
+    if not deductions:
+        deductions = _build_deductions(
+            points_lost=points_lost,
+            missing_keywords=missing_keywords,
+            explanation=explanation,
+        )
+
+    bonuses = _as_string_list(existing.get("bonuses_earned"))
+    if not bonuses:
+        bonuses = _build_bonus_notes(formula, explanation)
+
+    return {
+        "max_possible_score": int(existing.get("max_possible_score") or max_score),
+        "raw_score_earned": int(existing.get("raw_score_earned") or raw_score),
+        "mathematical_formula": mathematical_formula,
+        "deductions": deductions,
+        "bonuses_earned": bonuses,
+        "keyword_metrics": metrics,
+    }
 
 
 def _normalize_core_score(score: str, max_score: float) -> str:
@@ -216,6 +489,29 @@ def _post_process_candidates(candidates: List[Dict[str, Any]], weights: Dict[str
     return [_ensure_analysis_shape(candidate, criterion_specs) for candidate in candidates if isinstance(candidate, dict)]
 
 
+def attach_advanced_score_breakdowns(
+    candidates: List[Dict[str, Any]],
+    cv_text_map: Dict[str, str],
+    jd_text: str,
+) -> List[Dict[str, Any]]:
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        file_name = str(candidate.get("fileName") or candidate.get("file_name") or "")
+        cv_text = cv_text_map.get(file_name) or cv_text_map.get(file_name.lower()) or str(candidate.get("_cvText") or "")
+        analysis = candidate.get("analysis")
+        if not isinstance(analysis, dict):
+            continue
+        raw_details = analysis.get("Chi tiet") or analysis.get("Chi tiết") or analysis.get("Chi tiáº¿t") or []
+        details = [item for item in raw_details if isinstance(item, dict)] if isinstance(raw_details, list) else []
+        for detail in details:
+            detail["advancedBreakdown"] = build_advanced_score_breakdown(detail, jd_text=jd_text, cv_text=cv_text)
+        analysis["Chi tiet"] = details
+        analysis["Chi tiết"] = details
+        analysis["Chi tiáº¿t"] = details
+    return candidates
+
+
 def _extract_json_array(text: str) -> List[Dict[str, Any]]:
     cleaned = text.strip()
     start = cleaned.find("[")
@@ -315,6 +611,7 @@ def analyze_cv_entries(
         "\n\n".join(prompt_sections),
         {
             "responseMimeType": "application/json",
+            "responseSchema": _analysis_response_schema(),
             "temperature": 0.1,
             "topP": 0.8,
             "topK": 40,
@@ -349,6 +646,7 @@ async def analyze_cv_entries_async(
         "\n\n".join(prompt_sections),
         {
             "responseMimeType": "application/json",
+            "responseSchema": _analysis_response_schema(),
             "temperature": 0.1,
             "topP": 0.8,
             "topK": 40,
