@@ -34,6 +34,31 @@ class CvProfileRefineResponse(BaseModel):
     refined_name: str | None = None
 
 
+class IndustryPrediction(BaseModel):
+    label: str
+    score: float | None = None
+
+
+class CvIndustryClassificationRequest(BaseModel):
+    cv_text: str = Field(min_length=1)
+    top_k: int = Field(default=3, ge=1, le=10)
+
+
+class CvIndustryClassificationResponse(BaseModel):
+    predicted_label: str
+    confidence: float | None = None
+    top_predictions: List[IndustryPrediction] = Field(default_factory=list)
+    model_source: str
+
+
+class CvIndustryClassifierStatusResponse(BaseModel):
+    ready: bool
+    model_source: str
+    label_count: int = 0
+    labels: List[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class CandidateEnrichmentRequest(BaseModel):
     jd_text: str = Field(min_length=1)
     hard_filters: Dict[str, Any]

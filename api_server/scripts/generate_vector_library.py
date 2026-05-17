@@ -5,11 +5,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-VECTOR_DIR = ROOT_DIR / "data" / "vector-library"
+API_SERVER_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = API_SERVER_DIR.parent
+VECTOR_DIR = API_SERVER_DIR / "data" / "vector-library"
 SAMPLES_DIR = VECTOR_DIR / "samples"
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+if str(API_SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(API_SERVER_DIR))
 
 from app.core.config import get_settings
 from app.services.gemini_service import embed_text
@@ -334,7 +335,7 @@ def main() -> None:
             json.dumps({"records": output_records}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        print(f"saved {output_path.relative_to(ROOT_DIR)}")
+        print(f"saved {output_path.relative_to(REPO_ROOT)}")
 
 
 if __name__ == "__main__":

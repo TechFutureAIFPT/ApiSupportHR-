@@ -228,7 +228,13 @@ def _extract_json_array(text: str) -> List[Dict[str, Any]]:
     return data
 
 
-def _create_analysis_prompt(jd_text: str, weights: Dict[str, Any], hard_filters: Dict[str, Any]) -> str:
+def _create_analysis_prompt(
+    jd_text: str,
+    weights: Dict[str, Any],
+    hard_filters: Dict[str, Any],
+    *,
+    context_notes: str = "",
+) -> str:
     compact_jd = " ".join(jd_text.split())[:5000]
     compact_weights = _build_compact_criteria(weights)
 
@@ -240,6 +246,7 @@ def _create_analysis_prompt(jd_text: str, weights: Dict[str, Any], hard_filters:
             "location": hard_filters.get("location") or "Linh hoat",
             "min_exp": hard_filters.get("minExp") or "Khong yeu cau",
             "seniority": hard_filters.get("seniority") or "Linh hoat",
+            "context_notes": context_notes or "Khong co boi canh bo sung.",
         },
     )
 
@@ -249,9 +256,17 @@ def analyze_cv_entries(
     weights: Dict[str, Any],
     hard_filters: Dict[str, Any],
     cv_entries: List[Dict[str, str]],
+    *,
+    entry_contexts: Dict[str, Dict[str, Any]] | None = None,
+    context_notes: str = "",
 ) -> List[Dict[str, Any]]:
     settings = get_settings()
-    prompt = _create_analysis_prompt(jd_text, weights, hard_filters)
+    prompt = _create_analysis_prompt(
+        jd_text,
+        weights,
+        hard_filters,
+        context_notes=context_notes,
+    )
     prompt_sections: List[str] = [prompt]
 
     for entry in cv_entries:
@@ -259,10 +274,20 @@ def analyze_cv_entries(
         text = (entry.get("text", "") or "").strip()
         if not text:
             continue
-        if text.startswith("--- CV:"):
-            prompt_sections.append(text)
+        context_payload = (entry_contexts or {}).get(str(file_name), {})
+        analysis_text = str(context_payload.get("analysis_text") or text).strip()
+        entry_note = str(context_payload.get("entry_note") or "").strip()
+        few_shot_examples = str(context_payload.get("few_shot_examples") or "").strip()
+
+        if entry_note:
+            prompt_sections.append(f"--- PIPELINE CONTEXT: {file_name} ---\n{entry_note}")
+        if few_shot_examples:
+            prompt_sections.append(f"--- FEW-SHOT GROUNDING: {file_name} ---\n{few_shot_examples}")
+
+        if analysis_text.startswith("--- CV:"):
+            prompt_sections.append(analysis_text)
         else:
-            prompt_sections.append(f"--- CV: {file_name} ---\n{text}")
+            prompt_sections.append(f"--- CV: {file_name} ---\n{analysis_text}")
 
     response_text = generate_content(
         settings.gemini_default_model,

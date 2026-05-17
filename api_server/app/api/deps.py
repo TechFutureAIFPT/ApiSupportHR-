@@ -28,3 +28,24 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
         display_name=decoded.get("name"),
         photo_url=decoded.get("picture"),
     )
+
+
+async def get_optional_current_user(authorization: str | None = Header(default=None)) -> AuthenticatedUser | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        return None
+
+    try:
+        decoded = verify_firebase_token(token)
+    except Exception:
+        return None
+
+    return AuthenticatedUser(
+        uid=str(decoded.get("uid") or decoded.get("user_id") or ""),
+        email=str(decoded.get("email") or ""),
+        display_name=decoded.get("name"),
+        photo_url=decoded.get("picture"),
+    )

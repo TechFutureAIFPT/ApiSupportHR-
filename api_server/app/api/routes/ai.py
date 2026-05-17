@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_optional_current_user
 from app.schemas.analysis import (
     CandidateEnrichmentRequest,
     CandidateEnrichmentResponse,
     CoreCvAnalysisRequest,
     CoreCvAnalysisResponse,
+    CvIndustryClassificationRequest,
+    CvIndustryClassificationResponse,
+    CvIndustryClassifierStatusResponse,
     CvProfileRefineRequest,
     CvProfileRefineResponse,
 )
@@ -30,8 +33,9 @@ from app.schemas.workflows import (
 from app.schemas.account import AuthenticatedUser
 from app.services.candidate_enrichment_service import enrich_candidates
 from app.services.candidate_refinement_service import refine_cv_profile
-from app.services.cv_analysis_service import analyze_cv_entries
+from app.services.cv_pipeline_service import run_smart_cv_analysis
 from app.services.gemini_service import embed_text, generate_content
+from app.services.local_classifier_service import classify_cv_text, get_classifier_status
 from app.services.workflow_service import (
     extract_hard_filters,
     extract_job_position,
@@ -82,12 +86,16 @@ def interview_questions(payload: InterviewQuestionsRequest) -> InterviewQuestion
 
 
 @router.post("/cv/analyze-core", response_model=CoreCvAnalysisResponse)
-def cv_analyze_core(payload: CoreCvAnalysisRequest) -> CoreCvAnalysisResponse:
-    candidates = analyze_cv_entries(
+def cv_analyze_core(
+    payload: CoreCvAnalysisRequest,
+    current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
+) -> CoreCvAnalysisResponse:
+    candidates = run_smart_cv_analysis(
         payload.jd_text,
         payload.weights,
         payload.hard_filters,
         [entry.model_dump() for entry in payload.cv_entries],
+        current_user=current_user,
     )
     return CoreCvAnalysisResponse(candidates=candidates)
 
@@ -97,6 +105,24 @@ def cv_refine_profile(payload: CvProfileRefineRequest) -> CvProfileRefineRespons
     return CvProfileRefineResponse(
         **refine_cv_profile(payload.cv_text, payload.current_education, payload.current_name)
     )
+
+
+@router.get("/cv/classifier-status", response_model=CvIndustryClassifierStatusResponse)
+def cv_classifier_status() -> CvIndustryClassifierStatusResponse:
+    return CvIndustryClassifierStatusResponse(**get_classifier_status())
+
+
+@router.post("/cv/classify-industry", response_model=CvIndustryClassificationResponse)
+def cv_classify_industry(payload: CvIndustryClassificationRequest) -> CvIndustryClassificationResponse:
+    try:
+        result = classify_cv_text(payload.cv_text, top_k=payload.top_k)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+    return CvIndustryClassificationResponse(**result)
 
 
 @router.post("/cv/enrich", response_model=CandidateEnrichmentResponse)

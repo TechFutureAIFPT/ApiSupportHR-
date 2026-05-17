@@ -1,6 +1,7 @@
 .env
 .env.*
 .env.example
+!api_server/.env.example
 admin/
 *.json
 
@@ -25,3 +26,5 @@ dist/
 
 *.log
 .DS_Store
+
+ai_ml/
