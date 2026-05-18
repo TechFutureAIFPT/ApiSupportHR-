@@ -192,7 +192,7 @@ def _build_global_context_notes() -> str:
     return (
         "Pipeline notes:\n"
         "- Cache was checked before any Gemini scoring call.\n"
-        "- Local ML classification is a routing signal only.\n"
+        "- Local ML classification is a routing hint and a post-analysis industry-fit signal; never use it as sole evidence.\n"
         "- English CVs may include a Vietnamese normalized copy; preserve original technical terms.\n"
         "- Approved RAG exemplars are used only when the similarity gate passes.\n"
         "- Return strict JSON only, matching the configured scoring criteria."
@@ -457,6 +457,10 @@ async def run_smart_cv_analysis(
         except Exception as error:
             pipeline["warnings"].append(f"gemini_analysis_failed:{error}")
             base_candidates = [_failed_candidate(entry, error) for entry in miss_entries]
+
+        for candidate in base_candidates:
+            if isinstance(candidate, dict):
+                _attach_pipeline_metadata(candidate, metadata_by_file, cache_hit=False)
 
         try:
             generated_candidates = await asyncio.to_thread(

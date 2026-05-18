@@ -72,6 +72,13 @@ class Settings:
             or "approvedExemplars"
         )
         self.rubric_version = os.getenv("RUBRIC_VERSION", "v1").strip() or "v1"
+        raw_classifier_mode = os.getenv("LOCAL_CLASSIFIER_MODE", "local").strip().lower()
+        if raw_classifier_mode not in {"local", "remote", "auto"}:
+            raw_classifier_mode = "local"
+        self.local_classifier_mode = raw_classifier_mode
+        self.local_classifier_remote_classify_url = os.getenv("LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL", "").strip()
+        self.local_classifier_remote_status_url = os.getenv("LOCAL_CLASSIFIER_REMOTE_STATUS_URL", "").strip()
+        self.local_classifier_remote_timeout_seconds = _float_env("LOCAL_CLASSIFIER_REMOTE_TIMEOUT_SECONDS", 10.0)
         self.local_classifier_confidence_threshold = _float_env("LOCAL_CLASSIFIER_CONFIDENCE_THRESHOLD", 0.60)
         self.rag_similarity_threshold = _float_env("RAG_SIMILARITY_THRESHOLD", 0.75)
         self.rag_max_exemplars = max(1, int(_float_env("RAG_MAX_EXEMPLARS", 2)))

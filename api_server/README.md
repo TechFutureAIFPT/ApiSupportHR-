@@ -21,6 +21,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
   - `GOOGLE_OAUTH_CLIENT_SECRET`
   - `GOOGLE_OAUTH_REDIRECT_URI`
   - `GOOGLE_DRIVE_ALLOWED_ORIGINS`
+- Optional for remote CV classifier deployment:
+  - `LOCAL_CLASSIFIER_MODE=remote` or `auto`
+  - `LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL`
+  - `LOCAL_CLASSIFIER_REMOTE_STATUS_URL` (optional if the remote service also exposes `/api/cv/classifier-status`)
 
 ### Project structure
 
@@ -92,3 +96,4 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
 - You can deploy directly from `render.yaml` or mirror the same settings in Render UI.
+- The self-trained CV classifier can stay local inside this API, or be deployed as a separate HTTP service and wired back through `LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL`.

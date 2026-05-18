@@ -70,6 +70,19 @@ TIER2_VN = ["vietnampost", "cuc buu chinh", "cmc", "bkav", "viettel solutions", 
 JD_FIT_CRITERION_LABEL = "Phù hợp JD (Job Fit)"
 JD_FIT_CRITERION_ALIASES = [JD_FIT_CRITERION_LABEL, "Phù hợp JD", "Job Fit", "Phu hop JD"]
 JD_FIT_MAX_SCORE = 20.0
+INDUSTRY_FIT_CRITERION_LABEL = "Phu hop nganh/nghe"
+INDUSTRY_FIT_CRITERION_ALIASES = [
+    INDUSTRY_FIT_CRITERION_LABEL,
+    "Industry Fit",
+    "Phu hop nganh nghe",
+    "Chuẩn mẫu IT",
+    "Chuẩn mẫu SALES",
+    "Chuẩn mẫu MARKETING",
+    "Chuẩn mẫu DESIGN",
+]
+INDUSTRY_CLASSIFIER_MAX_SCORE = 3.0
+INDUSTRY_VECTOR_MAX_SCORE = 2.0
+INDUSTRY_FIT_MAX_SCORE = 5.0
 JD_CV_SIMILARITY_FLOOR = 0.45
 JD_CV_SIMILARITY_CEILING = 0.90
 MAX_EMBEDDING_TEXT_LENGTH = 6000
@@ -467,6 +480,210 @@ def _compute_industry_similarity(
     }
 
 
+def _pipeline_metadata(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = candidate.get("pipelineMetadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _normalized_collection_keys(values: Any) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    keys: List[str] = []
+    for value in values:
+        normalized = _normalize_lookup_key(str(value))
+        if normalized and normalized not in keys:
+            keys.append(normalized)
+    return keys
+
+
+def _resolve_target_industry(candidate: Dict[str, Any], hard_filters: Dict[str, Any]) -> Tuple[str | None, str]:
+    detected = _detect_industry(candidate, hard_filters)
+    if detected:
+        return detected, "candidate_or_filter"
+
+    collection_keys = _normalized_collection_keys(_pipeline_metadata(candidate).get("collectionKeys"))
+    if collection_keys:
+        return collection_keys[0], "classifier_inferred"
+
+    return None, "unknown"
+
+
+def _classifier_signal_for_industry(
+    candidate: Dict[str, Any],
+    target_industry: str,
+    target_source: str,
+) -> Dict[str, Any]:
+    metadata = _pipeline_metadata(candidate)
+    classifier = metadata.get("classifier") if isinstance(metadata.get("classifier"), dict) else {}
+    collection_keys = _normalized_collection_keys(metadata.get("collectionKeys"))
+    confidence = float(_parse_numeric_value(classifier.get("confidence")) or 0.0)
+    top_predictions = classifier.get("top_predictions") if isinstance(classifier.get("top_predictions"), list) else []
+    prediction_summary = [
+        f"{str(item.get('label') or '').strip()}:{float(item.get('score') or 0.0):.2f}"
+        for item in top_predictions[:3]
+        if isinstance(item, dict) and str(item.get("label") or "").strip()
+    ]
+    matched = bool(target_industry and target_industry in collection_keys)
+
+    if target_source == "classifier_inferred":
+        score = round(min(1.5, 0.5 + confidence), 1) if collection_keys else 0.0
+    elif matched:
+        if confidence >= 0.85:
+            score = 3.0
+        elif confidence >= 0.75:
+            score = 2.5
+        elif confidence >= 0.60:
+            score = 2.0
+        else:
+            score = 1.0
+    elif collection_keys:
+        score = 0.5 if confidence < 0.60 else 0.0
+    else:
+        score = 0.0
+
+    return {
+        "score": round(min(INDUSTRY_CLASSIFIER_MAX_SCORE, max(0.0, score)), 1),
+        "matched": matched,
+        "confidence": confidence,
+        "collectionKeys": collection_keys,
+        "predictionSummary": prediction_summary,
+        "modelSource": str(classifier.get("model_source") or metadata.get("classifierSource") or "").strip(),
+    }
+
+
+def _compute_industry_fit(
+    candidate: Dict[str, Any],
+    hard_filters: Dict[str, Any],
+    cv_text: str,
+    *,
+    owner_uid: str | None,
+    query_vector: List[float] | None,
+) -> Optional[Dict[str, Any]]:
+    target_industry, target_source = _resolve_target_industry(candidate, hard_filters)
+    if not target_industry:
+        return None
+
+    classifier_signal = _classifier_signal_for_industry(candidate, target_industry, target_source)
+    vector_insight = _compute_industry_similarity(
+        target_industry,
+        cv_text,
+        owner_uid=owner_uid,
+        file_name=str(candidate.get("fileName") or ""),
+        query_vector=query_vector,
+    )
+    vector_bonus = float(vector_insight.get("bonusPoints") or 0.0) if vector_insight else 0.0
+    vector_score = round(min(INDUSTRY_VECTOR_MAX_SCORE, (vector_bonus / 5.0) * INDUSTRY_VECTOR_MAX_SCORE), 1)
+    final_score = round(min(INDUSTRY_FIT_MAX_SCORE, classifier_signal["score"] + vector_score), 1)
+
+    evidence_parts: List[str] = [f"Nganh muc tieu: {target_industry.upper()}"]
+    if classifier_signal["predictionSummary"]:
+        evidence_parts.append(f"Classifier: {', '.join(classifier_signal['predictionSummary'])}")
+    if vector_insight and vector_insight.get("topMatches"):
+        evidence_parts.append(
+            "Vector matches: "
+            + "; ".join(
+                f"{item.get('name') or item.get('role') or item.get('id')} {float(item.get('similarity') or 0.0) * 100:.1f}%"
+                for item in list(vector_insight.get("topMatches") or [])[:3]
+                if isinstance(item, dict)
+            )
+        )
+    evidence = " | ".join(part for part in evidence_parts if part)
+
+    if target_source == "classifier_inferred":
+        explanation = (
+            "Khong thay du manh dau hieu nganh o phan cau hinh vao, nen he thong tam suy ra "
+            "nganh muc tieu tu classifier roi doi chieu them voi vector similarity."
+        )
+    elif classifier_signal["matched"]:
+        explanation = (
+            f"Classifier va vector similarity deu nghieng ve nhom {target_industry.upper()}, "
+            "vi vay CV duoc cong diem phu hop nganh/nghe."
+        )
+    else:
+        explanation = (
+            f"Classifier chua xac nhan ro nhom {target_industry.upper()} nen diem phu hop nganh/nghe bi gioi han."
+        )
+
+    return {
+        "targetIndustry": target_industry,
+        "targetSource": target_source,
+        "classifierScore": classifier_signal["score"],
+        "classifierMatched": classifier_signal["matched"],
+        "classifierConfidence": classifier_signal["confidence"],
+        "classifierCollectionKeys": classifier_signal["collectionKeys"],
+        "classifierPredictionSummary": classifier_signal["predictionSummary"],
+        "classifierModelSource": classifier_signal["modelSource"],
+        "vectorScore": vector_score,
+        "vectorInsight": vector_insight,
+        "finalScore": final_score,
+        "maxScore": INDUSTRY_FIT_MAX_SCORE,
+        "formula": (
+            f"Classifier {_format_score_value(classifier_signal['score'])}/{_format_score_value(INDUSTRY_CLASSIFIER_MAX_SCORE)} + "
+            f"Vector {_format_score_value(vector_score)}/{_format_score_value(INDUSTRY_VECTOR_MAX_SCORE)} = "
+            f"{_format_score_value(final_score)}/{_format_score_value(INDUSTRY_FIT_MAX_SCORE)}"
+        ),
+        "evidence": evidence,
+        "explanation": explanation,
+    }
+
+
+def _upsert_industry_fit_detail(
+    details: List[Dict[str, Any]],
+    *,
+    analysis: Dict[str, Any],
+    candidate: Dict[str, Any],
+    hard_filters: Dict[str, Any],
+    cv_text: str,
+    owner_uid: str | None,
+    query_vector: List[float] | None,
+) -> None:
+    detail_index = _find_detail_index(details, INDUSTRY_FIT_CRITERION_ALIASES)
+    previous_score = 0.0
+    if detail_index is not None:
+        score_text = _get_record_value(details[detail_index], ["Äiá»ƒm", "Diem", "Score"])
+        previous_score = _parse_detail_score(score_text)[0] or 0.0
+
+    fit_payload = _compute_industry_fit(
+        candidate,
+        hard_filters,
+        cv_text,
+        owner_uid=owner_uid,
+        query_vector=query_vector,
+    )
+    if not fit_payload:
+        return
+
+    candidate["industryFitInsights"] = fit_payload
+    vector_insight = fit_payload.get("vectorInsight") if isinstance(fit_payload.get("vectorInsight"), dict) else None
+    if vector_insight:
+        candidate["embeddingInsights"] = vector_insight
+
+    detail_payload = _detail_item(
+        INDUSTRY_FIT_CRITERION_LABEL,
+        f"{_format_score_value(float(fit_payload['finalScore']))}/{_format_score_value(INDUSTRY_FIT_MAX_SCORE)}",
+        str(fit_payload["formula"]),
+        str(fit_payload["evidence"]),
+        str(fit_payload["explanation"]),
+    )
+    if detail_index is None:
+        details.insert(1 if details else 0, detail_payload)
+    else:
+        details[detail_index] = detail_payload
+
+    current_total = (
+        _parse_numeric_value(analysis.get("Tá»•ng Ä‘iá»ƒm"))
+        or _parse_numeric_value(analysis.get("Tong diem"))
+        or _parse_numeric_value(analysis.get("TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"))
+        or _parse_numeric_value(analysis.get("TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“iÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m"))
+    )
+    if current_total is not None:
+        updated_total = max(0.0, min(100.0, current_total + (float(fit_payload["finalScore"]) - previous_score)))
+        analysis["Tá»•ng Ä‘iá»ƒm"] = round(updated_total, 1)
+        analysis["Tong diem"] = round(updated_total, 1)
+        analysis["TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
+        analysis["TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“iÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
+
+
 def _compute_jd_cv_embedding_match(
     jd_text: str,
     cv_text: str,
@@ -687,6 +904,17 @@ def enrich_candidates(
                     analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
 
         if cv_text:
+            _upsert_industry_fit_detail(
+                details,
+                analysis=analysis,
+                candidate=candidate,
+                hard_filters=hard_filters,
+                cv_text=cv_text,
+                owner_uid=owner_uid,
+                query_vector=cv_vector,
+            )
+
+        if False and cv_text:
             industry = _detect_industry(candidate, hard_filters)
             if industry:
                 insight = _compute_industry_similarity(
