@@ -1111,6 +1111,13 @@ def _post_process_candidates(candidates: List[Dict[str, Any]], weights: Dict[str
     return [_ensure_analysis_shape(candidate, criterion_specs) for candidate in candidates if isinstance(candidate, dict)]
 
 
+def normalize_candidates_against_weights(
+    candidates: List[Dict[str, Any]],
+    weights: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    return _post_process_candidates(candidates, weights)
+
+
 def attach_advanced_score_breakdowns(
     candidates: List[Dict[str, Any]],
     cv_text_map: Dict[str, str],

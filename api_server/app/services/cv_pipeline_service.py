@@ -18,7 +18,11 @@ from app.services.account.cache_service import (
 from app.services.account.history_service import sync_history_entry
 from app.services.analysis_grounding_service import build_approved_grounding_context
 from app.services.candidate_enrichment_service import enrich_candidates
-from app.services.cv_analysis_service import analyze_cv_entries_async, attach_advanced_score_breakdowns
+from app.services.cv_analysis_service import (
+    analyze_cv_entries_async,
+    attach_advanced_score_breakdowns,
+    normalize_candidates_against_weights,
+)
 from app.services.language_service import build_analysis_text_bundle, normalize_cv_text_for_analysis_async
 
 
@@ -486,6 +490,7 @@ async def run_smart_cv_analysis(
             _ensure_final_rank(candidate)
 
         generated_candidates = attach_advanced_score_breakdowns(generated_candidates, cv_text_by_file_name, jd_text)
+        generated_candidates = normalize_candidates_against_weights(generated_candidates, weights)
 
         if current_user:
             jd_hash = stable_hash(jd_text)
@@ -515,6 +520,7 @@ async def run_smart_cv_analysis(
 
     candidates = [*cached_candidates, *generated_candidates]
     candidates = attach_advanced_score_breakdowns(candidates, cv_text_by_file_name, jd_text)
+    candidates = normalize_candidates_against_weights(candidates, weights)
     for candidate in candidates:
         file_key = _candidate_file_key(candidate)
         _ensure_detected_location(
