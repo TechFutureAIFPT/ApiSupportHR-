@@ -1179,6 +1179,19 @@ def _create_analysis_prompt(
     )
 
 
+def _analysis_generation_config(*, include_schema: bool) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "responseMimeType": "application/json",
+        "temperature": 0.1,
+        "topP": 0.8,
+        "topK": 40,
+        "thinkingConfig": {"thinkingBudget": 0},
+    }
+    if include_schema:
+        config["responseSchema"] = _analysis_response_schema()
+    return config
+
+
 def _build_prompt_sections(
     jd_text: str,
     weights: Dict[str, Any],
@@ -1237,18 +1250,21 @@ def analyze_cv_entries(
         entry_contexts=entry_contexts,
         context_notes=context_notes,
     )
-    response_text = generate_content(
-        settings.gemini_cv_analysis_model,
-        "\n\n".join(prompt_sections),
-        {
-            "responseMimeType": "application/json",
-            "responseSchema": _analysis_response_schema(),
-            "temperature": 0.1,
-            "topP": 0.8,
-            "topK": 40,
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    )
+    prompt_text = "\n\n".join(prompt_sections)
+
+    try:
+        response_text = generate_content(
+            settings.gemini_cv_analysis_model,
+            prompt_text,
+            _analysis_generation_config(include_schema=True),
+        )
+    except Exception as error:
+        print(f"[CV Analysis] Schema-guided generation failed, retrying JSON-only mode: {error}")
+        response_text = generate_content(
+            settings.gemini_cv_analysis_model,
+            prompt_text,
+            _analysis_generation_config(include_schema=False),
+        )
 
     return _post_process_candidates(_extract_json_array(response_text), weights)
 
@@ -1271,17 +1287,22 @@ async def analyze_cv_entries_async(
         entry_contexts=entry_contexts,
         context_notes=context_notes,
     )
-    response_text = await asyncio.to_thread(
-        generate_content,
-        settings.gemini_cv_analysis_model,
-        "\n\n".join(prompt_sections),
-        {
-            "responseMimeType": "application/json",
-            "responseSchema": _analysis_response_schema(),
-            "temperature": 0.1,
-            "topP": 0.8,
-            "topK": 40,
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    )
+    prompt_text = "\n\n".join(prompt_sections)
+
+    try:
+        response_text = await asyncio.to_thread(
+            generate_content,
+            settings.gemini_cv_analysis_model,
+            prompt_text,
+            _analysis_generation_config(include_schema=True),
+        )
+    except Exception as error:
+        print(f"[CV Analysis] Async schema-guided generation failed, retrying JSON-only mode: {error}")
+        response_text = await asyncio.to_thread(
+            generate_content,
+            settings.gemini_cv_analysis_model,
+            prompt_text,
+            _analysis_generation_config(include_schema=False),
+        )
+
     return _post_process_candidates(_extract_json_array(response_text), weights)
