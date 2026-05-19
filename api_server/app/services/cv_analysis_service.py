@@ -87,6 +87,21 @@ NEGATION_TERMS = (
     "not",
     "without",
 )
+GENERIC_EXPLANATION_TERMS = (
+    "chua tra ve",
+    "can cai thien",
+    "chua du thong tin",
+    "can xem them",
+    "co tiem nang",
+    "kha phu hop",
+    "chua phu hop hoan toan",
+)
+GENERIC_EVIDENCE_TERMS = (
+    "khong tim thay bang chung",
+    "chua tra ve",
+    "chua du bang chung",
+)
+VERDICT_ORDER = {"missing": 0, "weak": 1, "partial": 2, "strong": 3}
 
 
 def _build_compact_criteria(weights: Dict[str, Any]) -> str:
@@ -390,11 +405,11 @@ def _extract_numeric_score(value: str) -> float | None:
         return None
 
 
-def _parse_score_pair(score_text: str, formula_text: str = "") -> tuple[int, int]:
+def _parse_score_pair(score_text: str, formula_text: str = "") -> tuple[float, float]:
     ratio_match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*/\s*([+-]?\d+(?:\.\d+)?)", score_text or "")
     if ratio_match:
         try:
-            return max(0, round(float(ratio_match.group(1)))), max(0, round(float(ratio_match.group(2))))
+            return max(0.0, float(ratio_match.group(1))), max(0.0, float(ratio_match.group(2)))
         except ValueError:
             pass
 
@@ -406,7 +421,7 @@ def _parse_score_pair(score_text: str, formula_text: str = "") -> tuple[int, int
             max_score = float(max_match.group(1))
         except ValueError:
             max_score = raw
-    return max(0, round(raw)), max(0, round(max_score or raw))
+    return max(0.0, raw), max(0.0, max_score or raw)
 
 
 def _as_advanced_dict(value: Any) -> dict[str, Any]:
@@ -421,9 +436,9 @@ def _as_deductions(value: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         reason = str(item.get("reason") or "").strip()
-        points_lost = int(_extract_numeric_score(str(item.get("points_lost") or item.get("pointsLost") or 0)) or 0)
+        points_lost = float(_extract_numeric_score(str(item.get("points_lost") or item.get("pointsLost") or 0)) or 0)
         if reason or points_lost:
-            deductions.append({"reason": reason, "points_lost": max(0, points_lost)})
+            deductions.append({"reason": reason, "points_lost": round(max(0.0, points_lost), 1)})
     return deductions
 
 
@@ -435,19 +450,19 @@ def _as_string_list(value: Any) -> list[str]:
 
 def _build_deductions(
     *,
-    points_lost: int,
+    points_lost: float,
     missing_keywords: list[str],
     explanation: str,
 ) -> list[dict[str, Any]]:
     if points_lost <= 0:
         return []
     if missing_keywords:
-        per_keyword = max(1, round(points_lost / max(1, len(missing_keywords))))
-        remaining = points_lost
+        per_keyword = round(points_lost / max(1, len(missing_keywords)), 1)
+        remaining = round(points_lost, 1)
         deductions: list[dict[str, Any]] = []
         for keyword in missing_keywords[:8]:
-            lost = min(per_keyword, remaining)
-            remaining -= lost
+            lost = round(min(per_keyword, remaining), 1)
+            remaining = round(remaining - lost, 1)
             deductions.append(
                 {
                     "reason": f"Thieu tu khoa cot loi trong JD: {keyword}",
@@ -457,9 +472,19 @@ def _build_deductions(
             if remaining <= 0:
                 break
         if remaining > 0:
-            deductions.append({"reason": explanation or "Chua du bang chung de dat diem toi da.", "points_lost": remaining})
+            deductions.append(
+                {
+                    "reason": explanation or "Chua du bang chung de dat diem toi da.",
+                    "points_lost": round(remaining, 1),
+                }
+            )
         return deductions
-    return [{"reason": explanation or "Chua du bang chung de dat diem toi da.", "points_lost": points_lost}]
+    return [
+        {
+            "reason": explanation or "Chua du bang chung de dat diem toi da.",
+            "points_lost": round(points_lost, 1),
+        }
+    ]
 
 
 def _build_bonus_notes(formula: str, explanation: str) -> list[str]:
@@ -494,6 +519,275 @@ def _merge_keyword_metrics(existing: Any, computed: dict[str, Any]) -> dict[str,
     }
 
 
+def _score_ratio(raw_score: float, max_score: float) -> float:
+    if max_score <= 0:
+        return 0.0
+    return max(0.0, min(1.0, raw_score / max_score))
+
+
+def _criterion_family(criterion_name: str) -> str:
+    normalized = _normalize_lookup(criterion_name)
+    if any(term in normalized for term in ("phu hop jd", "job fit", "industry", "nganh", "role fit")):
+        return "fit"
+    if any(term in normalized for term in ("ky nang", "skill", "framework", "technology")):
+        return "skill"
+    if any(term in normalized for term in ("kinh nghiem", "experience", "seniority")):
+        return "experience"
+    if any(term in normalized for term in ("hoc van", "education", "degree", "chung chi", "certification")):
+        return "education"
+    if any(term in normalized for term in ("ngon ngu", "language", "ielts", "toeic", "jlpt", "topik")):
+        return "language"
+    if any(term in normalized for term in ("thanh tuu", "kpi", "achievement", "impact", "ket qua")):
+        return "achievement"
+    if any(term in normalized for term in ("van hoa", "culture", "thai do", "professional", "chuyen nghiep")):
+        return "behavior"
+    return "general"
+
+
+def _split_text_fragments(value: str, *, limit_count: int = 4) -> list[str]:
+    fragments: list[str] = []
+    for piece in re.split(r"[|\n;]+", value or ""):
+        cleaned = " ".join(str(piece).split()).strip(" -")
+        if len(cleaned) < 6:
+            continue
+        if cleaned not in fragments:
+            fragments.append(cleaned[:220])
+        if len(fragments) >= limit_count:
+            break
+    return fragments
+
+
+def _looks_generic_explanation(value: str) -> bool:
+    normalized = _normalize_lookup(value)
+    if not normalized:
+        return True
+    return any(term in normalized for term in GENERIC_EXPLANATION_TERMS)
+
+
+def _looks_generic_evidence(value: str) -> bool:
+    normalized = _normalize_lookup(value)
+    if not normalized:
+        return True
+    return any(term in normalized for term in GENERIC_EVIDENCE_TERMS)
+
+
+def _build_evidence_highlights(
+    evidence_text: str,
+    metrics: dict[str, Any],
+) -> list[str]:
+    highlights = _split_text_fragments(evidence_text, limit_count=4)
+    if len(highlights) >= 2:
+        return highlights
+
+    for item in metrics.get("keywords_list", []):
+        if not isinstance(item, dict) or item.get("status") != "matched":
+            continue
+        context_sentence = str(item.get("context_sentence") or "").strip()
+        if context_sentence and context_sentence not in highlights:
+            highlights.append(context_sentence[:220])
+        if len(highlights) >= 4:
+            break
+    return highlights
+
+
+def _build_matched_signals(
+    criterion_name: str,
+    metrics: dict[str, Any],
+    evidence_highlights: list[str],
+) -> list[str]:
+    signals: list[str] = []
+    for item in metrics.get("keywords_list", []):
+        if not isinstance(item, dict) or item.get("status") != "matched":
+            continue
+        keyword = str(item.get("keyword") or "").strip()
+        if keyword and keyword not in signals:
+            signals.append(keyword)
+        if len(signals) >= 4:
+            break
+
+    if signals:
+        return signals
+
+    family = _criterion_family(criterion_name)
+    if evidence_highlights:
+        if family == "experience":
+            return ["Co mo ta kinh nghiem lien quan trong CV."]
+        if family == "achievement":
+            return ["Co bang chung ve ket qua/anh huong trong CV."]
+        if family == "education":
+            return ["Co thong tin hoc van/chung chi lien quan."]
+        if family == "language":
+            return ["Co thong tin ve trinh do ngon ngu."]
+        return [evidence_highlights[0]]
+    return []
+
+
+def _build_missing_requirements(
+    criterion_name: str,
+    metrics: dict[str, Any],
+    deductions: list[dict[str, Any]],
+    evidence_quality: str,
+) -> list[str]:
+    missing: list[str] = []
+    for item in metrics.get("keywords_list", []):
+        if not isinstance(item, dict) or item.get("status") != "missing":
+            continue
+        keyword = str(item.get("keyword") or "").strip()
+        if keyword and keyword not in missing:
+            missing.append(keyword)
+        if len(missing) >= 4:
+            break
+
+    if missing:
+        return missing
+
+    for deduction in deductions:
+        reason = str(deduction.get("reason") or "").strip()
+        if reason and reason not in missing:
+            missing.append(reason[:120])
+        if len(missing) >= 3:
+            break
+
+    if not missing and evidence_quality in {"weak", "missing"}:
+        family = _criterion_family(criterion_name)
+        fallback_map = {
+            "fit": "Chua thay bang chung so khop voi vai tro/JD.",
+            "skill": "Chua thay ky nang bat buoc duoc neu ro.",
+            "experience": "Chua thay so nam hoac scope kinh nghiem ro rang.",
+            "education": "Chua thay hoc van/chung chi dung yeu cau.",
+            "language": "Chua thay muc do ngon ngu duoc xac nhan.",
+            "achievement": "Chua thay ket qua dinh luong de chung minh tac dong.",
+            "behavior": "Chua thay bang chung cho tac phong/phu hop van hoa.",
+            "general": "Chua thay bang chung ro rang de dat diem cao.",
+        }
+        missing.append(fallback_map.get(family, fallback_map["general"]))
+    return missing
+
+
+def _build_verdict(raw_score: float, max_score: float) -> str:
+    ratio = _score_ratio(raw_score, max_score)
+    if max_score <= 0 and raw_score <= 0:
+        return "missing"
+    if ratio >= 0.8:
+        return "strong"
+    if ratio >= 0.5:
+        return "partial"
+    if ratio > 0:
+        return "weak"
+    return "missing"
+
+
+def _merge_verdict(primary: str, secondary: str) -> str:
+    return primary if VERDICT_ORDER.get(primary, -1) >= VERDICT_ORDER.get(secondary, -1) else secondary
+
+
+def _build_evidence_quality(
+    evidence_text: str,
+    evidence_highlights: list[str],
+    metrics: dict[str, Any],
+) -> str:
+    if evidence_highlights and len(evidence_highlights) >= 2:
+        return "strong"
+    if evidence_highlights:
+        return "partial"
+    if evidence_text and not _looks_generic_evidence(evidence_text):
+        return "partial"
+    matched_count = int(metrics.get("matched_keywords_count") or 0)
+    if matched_count > 0:
+        return "weak"
+    return "missing"
+
+
+def _build_quality_flags(
+    *,
+    formula_text: str,
+    evidence_text: str,
+    explanation_text: str,
+    evidence_quality: str,
+    matched_signals: list[str],
+    missing_requirements: list[str],
+) -> list[str]:
+    flags: list[str] = []
+    if _is_weak_formula(formula_text):
+        flags.append("weak_formula")
+    if evidence_quality in {"weak", "missing"}:
+        flags.append("weak_evidence")
+    if _looks_generic_explanation(explanation_text):
+        flags.append("generic_explanation")
+    if not matched_signals and not missing_requirements:
+        flags.append("thin_reasoning")
+    return flags
+
+
+def _build_evidence_summary(
+    criterion_name: str,
+    evidence_highlights: list[str],
+    matched_signals: list[str],
+    missing_requirements: list[str],
+) -> str:
+    if evidence_highlights:
+        return " | ".join(evidence_highlights[:3])
+    if matched_signals:
+        return f"Bang chung chinh: {', '.join(matched_signals[:3])}."
+    if missing_requirements:
+        family = _criterion_family(criterion_name)
+        if family == "skill":
+            return f"Chua thay bang chung cho: {', '.join(missing_requirements[:3])}."
+        return f"Khong tim thay bang chung ro rang; con thieu {', '.join(missing_requirements[:2])}."
+    return "Khong tim thay bang chung ro rang trong CV hien tai."
+
+
+def _build_detail_explanation(
+    *,
+    criterion_name: str,
+    verdict: str,
+    matched_signals: list[str],
+    missing_requirements: list[str],
+) -> str:
+    matched_text = ", ".join(matched_signals[:3])
+    missing_text = ", ".join(missing_requirements[:3])
+    if verdict == "strong":
+        if matched_text:
+            return f"Tieu chi {criterion_name} dat tot nho da the hien ro {matched_text}."
+        return f"Tieu chi {criterion_name} dat tot va co bang chung ro trong CV."
+    if verdict == "partial":
+        if matched_text and missing_text:
+            return f"Tieu chi {criterion_name} dat mot phan: co {matched_text}, nhung con thieu {missing_text}."
+        if matched_text:
+            return f"Tieu chi {criterion_name} dat mot phan dua tren {matched_text}."
+        return f"Tieu chi {criterion_name} dat mot phan nhung bang chung con mong."
+    if verdict == "weak":
+        if missing_text:
+            return f"Tieu chi {criterion_name} dat thap vi con thieu {missing_text}."
+        return f"Tieu chi {criterion_name} dat thap do bang chung trong CV chua du ro."
+    if missing_text:
+        return f"Tieu chi {criterion_name} chua dat vi khong tim thay bang chung cho {missing_text}."
+    return f"Tieu chi {criterion_name} chua dat vi khong tim thay bang chung ro rang trong CV."
+
+
+def _build_improvement_suggestion(
+    criterion_name: str,
+    missing_requirements: list[str],
+    evidence_quality: str,
+) -> str:
+    if missing_requirements:
+        return f"Bo sung bang chung cu the cho: {', '.join(missing_requirements[:3])}."
+
+    family = _criterion_family(criterion_name)
+    family_defaults = {
+        "fit": "Neu ro du an/ky nang gan truc tiep voi JD va ket qua da dat duoc.",
+        "skill": "Bo sung cong nghe, framework, tool va pham vi da su dung.",
+        "experience": "Neu ro so nam kinh nghiem, scope du an va vai tro dam nhiem.",
+        "education": "Bo sung bang cap, chung chi hoac mon hoc lien quan.",
+        "language": "Neu ro trinh do, chung chi va tinh huong da su dung ngon ngu.",
+        "achievement": "Them KPI, metric, doanh thu, toc do tang truong hoac impact dinh luong.",
+        "behavior": "Bo sung vi du ve ownership, teamwork, communication hoac leadership.",
+        "general": "Bo sung bang chung cu the va ket qua do luong duoc cho tieu chi nay.",
+    }
+    if evidence_quality in {"weak", "missing"}:
+        return family_defaults.get(family, family_defaults["general"])
+    return "Duy tri bang chung cu the va neu ro hon tac dong thuc te de giu diem cao."
+
 def _is_weak_formula(value: str) -> bool:
     normalized = _normalize_lookup(value)
     if not normalized:
@@ -506,10 +800,11 @@ def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_t
     criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­", "Criterion")
     score_text = _get_detail_value(detail, "Diem", "Điểm", "Äiá»ƒm", "Score")
     formula = _get_detail_value(detail, "Cong thuc", "Công thức", "CÃ´ng thá»©c", "Formula")
+    evidence = _get_detail_value(detail, "Dan chung", "Dẫn chứng", "Dáº«n chá»©ng", "Evidence")
     explanation = _get_detail_value(detail, "Giai thich", "Giải thích", "Giáº£i thÃ­ch", "Explanation")
     raw_score, max_score = _parse_score_pair(score_text, formula)
     max_score = max(max_score, raw_score)
-    points_lost = max(0, max_score - raw_score)
+    points_lost = max(0.0, max_score - raw_score)
     computed_metrics = _keyword_metrics(jd_text, cv_text, criterion_name)
     if computed_metrics.get("total_required_keywords"):
         metrics = computed_metrics
@@ -528,9 +823,13 @@ def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_t
         if formula and not _is_weak_formula(formula):
             mathematical_formula = formula
         elif points_lost:
-            mathematical_formula = f"{max_score}d (toi da) - {points_lost}d (cac diem chua dat) = {raw_score}d"
+            mathematical_formula = (
+                f"{_format_score_value(max_score)}d (toi da) - "
+                f"{_format_score_value(points_lost)}d (cac diem chua dat) = "
+                f"{_format_score_value(raw_score)}d"
+            )
         else:
-            mathematical_formula = f"{max_score}d (toi da) - 0d = {raw_score}d"
+            mathematical_formula = f"{_format_score_value(max_score)}d (toi da) - 0d = {_format_score_value(raw_score)}d"
 
     deductions = _as_deductions(existing.get("deductions"))
     if not deductions:
@@ -544,14 +843,159 @@ def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_t
     if not bonuses:
         bonuses = _build_bonus_notes(formula, explanation)
 
+    evidence_highlights = _as_string_list(existing.get("evidence_highlights")) or _build_evidence_highlights(
+        evidence,
+        metrics,
+    )
+    matched_signals = _as_string_list(existing.get("matched_signals")) or _build_matched_signals(
+        criterion_name,
+        metrics,
+        evidence_highlights,
+    )
+    evidence_quality = str(existing.get("evidence_quality") or "").strip().lower()
+    if evidence_quality not in VERDICT_ORDER:
+        evidence_quality = _build_evidence_quality(evidence, evidence_highlights, metrics)
+    missing_requirements = _as_string_list(existing.get("missing_requirements")) or _build_missing_requirements(
+        criterion_name,
+        metrics,
+        deductions,
+        evidence_quality,
+    )
+    verdict = str(existing.get("verdict") or "").strip().lower()
+    if verdict not in VERDICT_ORDER:
+        verdict = _build_verdict(raw_score, max_score)
+    if evidence_quality == "missing" and verdict == "strong":
+        verdict = "partial"
+    if not matched_signals and verdict == "strong":
+        verdict = "partial"
+    improvement_suggestion = str(existing.get("improvement_suggestion") or "").strip() or _build_improvement_suggestion(
+        criterion_name,
+        missing_requirements,
+        evidence_quality,
+    )
+    quality_flags = _as_string_list(existing.get("quality_flags")) or _build_quality_flags(
+        formula_text=mathematical_formula,
+        evidence_text=evidence,
+        explanation_text=explanation,
+        evidence_quality=evidence_quality,
+        matched_signals=matched_signals,
+        missing_requirements=missing_requirements,
+    )
+
     return {
-        "max_possible_score": int(existing.get("max_possible_score") or max_score),
-        "raw_score_earned": int(existing.get("raw_score_earned") or raw_score),
+        "max_possible_score": round(float(existing.get("max_possible_score") or max_score), 1),
+        "raw_score_earned": round(float(existing.get("raw_score_earned") or raw_score), 1),
         "mathematical_formula": mathematical_formula,
         "deductions": deductions,
         "bonuses_earned": bonuses,
         "keyword_metrics": metrics,
+        "verdict": verdict,
+        "evidence_quality": evidence_quality,
+        "matched_signals": matched_signals,
+        "missing_requirements": missing_requirements,
+        "evidence_highlights": evidence_highlights,
+        "improvement_suggestion": improvement_suggestion,
+        "quality_flags": quality_flags,
     }
+
+
+def _set_detail_field(detail: dict[str, Any], field: str, value: str) -> None:
+    aliases = {
+        "Tieu chi": ("Tieu chi", "Tiêu chí", "TiÃªu chÃ­"),
+        "Diem": ("Diem", "Điểm", "Äiá»ƒm"),
+        "Cong thuc": ("Cong thuc", "Công thức", "CÃ´ng thá»©c"),
+        "Dan chung": ("Dan chung", "Dẫn chứng", "Dáº«n chá»©ng"),
+        "Giai thich": ("Giai thich", "Giải thích", "Giáº£i thÃ­ch"),
+    }
+    for key in aliases.get(field, (field,)):
+        detail[key] = value
+
+
+def _repair_detail_content(detail: dict[str, Any], breakdown: dict[str, Any]) -> None:
+    criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­", "Criterion")
+    formula = _get_detail_value(detail, "Cong thuc", "Công thức", "CÃ´ng thá»©c", "Formula")
+    evidence = _get_detail_value(detail, "Dan chung", "Dẫn chứng", "Dáº«n chá»©ng", "Evidence")
+    explanation = _get_detail_value(detail, "Giai thich", "Giải thích", "Giáº£i thÃ­ch", "Explanation")
+    matched_signals = _as_string_list(breakdown.get("matched_signals"))
+    missing_requirements = _as_string_list(breakdown.get("missing_requirements"))
+    evidence_highlights = _as_string_list(breakdown.get("evidence_highlights"))
+    verdict = str(breakdown.get("verdict") or "missing")
+
+    repaired_formula = formula if formula and not _is_weak_formula(formula) else str(breakdown.get("mathematical_formula") or "")
+    repaired_evidence = evidence if evidence and not _looks_generic_evidence(evidence) else _build_evidence_summary(
+        criterion_name,
+        evidence_highlights,
+        matched_signals,
+        missing_requirements,
+    )
+    repaired_explanation = explanation if explanation and not _looks_generic_explanation(explanation) else _build_detail_explanation(
+        criterion_name=criterion_name,
+        verdict=verdict,
+        matched_signals=matched_signals,
+        missing_requirements=missing_requirements,
+    )
+
+    _set_detail_field(detail, "Cong thuc", repaired_formula)
+    _set_detail_field(detail, "Dan chung", repaired_evidence)
+    _set_detail_field(detail, "Giai thich", repaired_explanation)
+
+
+def _refresh_candidate_summary(analysis: dict[str, Any]) -> None:
+    raw_details = analysis.get("Chi tiet") or analysis.get("Chi tiết") or analysis.get("Chi tiáº¿t") or []
+    details = [item for item in raw_details if isinstance(item, dict)] if isinstance(raw_details, list) else []
+    strengths: list[str] = []
+    weaknesses: list[str] = []
+
+    for detail in details:
+        criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­")
+        breakdown = _as_advanced_dict(detail.get("advancedBreakdown") or detail.get("advanced_breakdown"))
+        verdict = str(breakdown.get("verdict") or "missing")
+        matched_signals = _as_string_list(breakdown.get("matched_signals"))
+        missing_requirements = _as_string_list(breakdown.get("missing_requirements"))
+
+        if verdict == "strong":
+            message = criterion_name
+            if matched_signals:
+                message = f"{criterion_name}: {matched_signals[0]}"
+            if message not in strengths:
+                strengths.append(message)
+        elif verdict in {"weak", "missing"}:
+            message = criterion_name
+            if missing_requirements:
+                message = f"{criterion_name}: {missing_requirements[0]}"
+            if message not in weaknesses:
+                weaknesses.append(message)
+
+    if not strengths and details:
+        best_detail = max(
+            details,
+            key=lambda item: _score_ratio(
+                *_parse_score_pair(
+                    _get_detail_value(item, "Diem", "Điểm", "Äiá»ƒm"),
+                    _get_detail_value(item, "Cong thuc", "Công thức", "CÃ´ng thá»©c"),
+                )
+            ),
+        )
+        best_name = _get_detail_value(best_detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­")
+        if best_name:
+            strengths.append(best_name)
+
+    if not weaknesses and details:
+        weakest_detail = min(
+            details,
+            key=lambda item: _score_ratio(
+                *_parse_score_pair(
+                    _get_detail_value(item, "Diem", "Điểm", "Äiá»ƒm"),
+                    _get_detail_value(item, "Cong thuc", "Công thức", "CÃ´ng thá»©c"),
+                )
+            ),
+        )
+        weakest_name = _get_detail_value(weakest_detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­")
+        if weakest_name:
+            weaknesses.append(weakest_name)
+
+    analysis["Diem manh CV"] = strengths[:4]
+    analysis["Diem yeu CV"] = weaknesses[:3]
 
 
 def _normalize_core_score(score: str, max_score: float) -> str:
@@ -684,9 +1128,11 @@ def attach_advanced_score_breakdowns(
         details = [item for item in raw_details if isinstance(item, dict)] if isinstance(raw_details, list) else []
         for detail in details:
             detail["advancedBreakdown"] = build_advanced_score_breakdown(detail, jd_text=jd_text, cv_text=cv_text)
+            _repair_detail_content(detail, detail["advancedBreakdown"])
         analysis["Chi tiet"] = details
         analysis["Chi tiết"] = details
         analysis["Chi tiáº¿t"] = details
+        _refresh_candidate_summary(analysis)
     return candidates
 
 

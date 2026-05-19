@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 class PointDeduction(BaseModel):
     reason: str = ""
-    points_lost: int = 0
+    points_lost: float = 0.0
 
 
 class KeywordAnalysis(BaseModel):
@@ -23,13 +23,23 @@ class SkillKeywordMetrics(BaseModel):
     keywords_list: List[KeywordAnalysis] = Field(default_factory=list)
 
 
+ExplanationQuality = Literal["strong", "partial", "weak", "missing"]
+
+
 class AdvancedScoreBreakdown(BaseModel):
-    max_possible_score: int = 0
-    raw_score_earned: int = 0
+    max_possible_score: float = 0.0
+    raw_score_earned: float = 0.0
     mathematical_formula: str = ""
     deductions: List[PointDeduction] = Field(default_factory=list)
     bonuses_earned: List[str] = Field(default_factory=list)
     keyword_metrics: SkillKeywordMetrics = Field(default_factory=SkillKeywordMetrics)
+    verdict: ExplanationQuality = "missing"
+    evidence_quality: ExplanationQuality = "missing"
+    matched_signals: List[str] = Field(default_factory=list)
+    missing_requirements: List[str] = Field(default_factory=list)
+    evidence_highlights: List[str] = Field(default_factory=list)
+    improvement_suggestion: str = ""
+    quality_flags: List[str] = Field(default_factory=list)
 
 
 class StructuredDetailScore(BaseModel):
