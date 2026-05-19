@@ -12,7 +12,7 @@ from typing import Any, Iterable
 
 
 DEFAULT_COLLECTION = "approvedExemplars"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-004"
+DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
 MAX_BATCH_SIZE = 400
 
 CSV_RESUME_COLUMNS = ("resume_text", "resume", "cv_text", "cv", "candidate_resume")
@@ -111,12 +111,10 @@ def candidate_data_dirs(explicit_data_dir: str | None) -> list[Path]:
         return [Path(explicit_data_dir).expanduser().resolve()]
 
     script_dir = Path(__file__).resolve().parent
-    repo_root = script_dir.parent
+    workspace_root = script_dir.parent
     return [
-        script_dir / "data" / "kaggle-job-resume-fit",
-        script_dir / "data" / "raw" / "kaggle-job-resume-fit",
-        repo_root / "ai_ml" / "data" / "raw" / "kaggle-job-resume-fit",
-        repo_root / "ai_ml" / "data" / "kaggle-job-resume-fit",
+        workspace_root / "data" / "raw" / "kaggle-job-resume-fit",
+        workspace_root / "data" / "kaggle-job-resume-fit",
     ]
 
 

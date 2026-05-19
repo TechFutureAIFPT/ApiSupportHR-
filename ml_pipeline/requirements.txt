@@ -1,2 +1,5 @@
 google-cloud-firestore
 google-genai
+joblib
+pandas
+scikit-learn
