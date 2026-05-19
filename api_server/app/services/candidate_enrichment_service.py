@@ -86,6 +86,13 @@ INDUSTRY_FIT_MAX_SCORE = 5.0
 JD_CV_SIMILARITY_FLOOR = 0.45
 JD_CV_SIMILARITY_CEILING = 0.90
 MAX_EMBEDDING_TEXT_LENGTH = 6000
+DETAIL_LIST_ALIASES = [
+    "Chi tiet",
+    "Chi tiết",
+    "Chi tiáº¿t",
+    "Chi tiÃ¡ÂºÂ¿t",
+    "Chi tiÃƒÂ¡Ã‚ÂºÃ‚Â¿t",
+]
 
 
 def _normalize_text(value: str) -> str:
@@ -107,6 +114,21 @@ def _get_record_value(record: Dict[str, Any], aliases: List[str]) -> str:
         if _normalize_lookup_key(str(key)) in alias_set:
             return str(value).strip()
     return ""
+
+
+def _get_analysis_details(analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+    alias_set = {_normalize_lookup_key(alias) for alias in DETAIL_LIST_ALIASES}
+    for key, value in analysis.items():
+        if _normalize_lookup_key(str(key)) in alias_set:
+            if isinstance(value, list):
+                return value
+            return []
+    return []
+
+
+def _sync_analysis_detail_aliases(analysis: Dict[str, Any], details: List[Dict[str, Any]]) -> None:
+    for alias in DETAIL_LIST_ALIASES:
+        analysis[alias] = details
 
 
 def _parse_numeric_value(value: Any) -> float | None:
@@ -172,7 +194,7 @@ def _extract_skills_from_jd(jd_text: str) -> List[str]:
 
 def _extract_skills_from_candidate(candidate: Dict[str, Any]) -> List[str]:
     analysis = candidate.get("analysis") or {}
-    details = analysis.get("Chi tiáº¿t") or analysis.get("Chi tiÃ¡ÂºÂ¿t") or []
+    details = _get_analysis_details(analysis)
     strengths = analysis.get("Äiá»ƒm máº¡nh CV") or analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV") or []
     texts = [
         candidate.get("jobTitle", ""),
@@ -187,7 +209,7 @@ def _extract_skills_from_candidate(candidate: Dict[str, Any]) -> List[str]:
 
 def _extract_companies_from_candidate(candidate: Dict[str, Any]) -> List[str]:
     analysis = candidate.get("analysis") or {}
-    details = analysis.get("Chi tiáº¿t") or analysis.get("Chi tiÃ¡ÂºÂ¿t") or []
+    details = _get_analysis_details(analysis)
     strengths = analysis.get("Äiá»ƒm máº¡nh CV") or analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV") or []
     evidence = " ".join([
         str(candidate.get("jobTitle", "")),
@@ -823,11 +845,8 @@ def enrich_candidates(
     for candidate in candidates:
         cv_text = cv_text_map.get(str(candidate.get("fileName", "")), "")
         analysis = candidate.get("analysis") or {}
-        details = analysis.get("Chi tiáº¿t") or analysis.get("Chi tiÃ¡ÂºÂ¿t")
-        if not isinstance(details, list):
-            details = []
-        analysis["Chi tiáº¿t"] = details
-        analysis["Chi tiÃ¡ÂºÂ¿t"] = details
+        details = _get_analysis_details(analysis)
+        _sync_analysis_detail_aliases(analysis, details)
 
         cv_vector: List[float] | None = None
         if cv_text:

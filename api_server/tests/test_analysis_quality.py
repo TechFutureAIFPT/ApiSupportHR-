@@ -12,6 +12,36 @@ def _install_dependency_stubs() -> None:
         dotenv_module.load_dotenv = lambda *args, **kwargs: None
         sys.modules["dotenv"] = dotenv_module
 
+    if "pydantic" not in sys.modules:
+        pydantic_module = types.ModuleType("pydantic")
+
+        class BaseModel:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            @classmethod
+            def model_validate(cls, value):
+                return value
+
+            def model_dump(self, *args, **kwargs):
+                return {}
+
+        class RootModel:
+            @classmethod
+            def __class_getitem__(cls, item):
+                return cls
+
+        def Field(*args, default=None, default_factory=None, **kwargs):
+            if default_factory is not None:
+                return default_factory()
+            return default
+
+        pydantic_module.BaseModel = BaseModel
+        pydantic_module.ConfigDict = dict
+        pydantic_module.Field = Field
+        pydantic_module.RootModel = RootModel
+        sys.modules["pydantic"] = pydantic_module
+
     if "firebase_admin" not in sys.modules:
         firebase_admin_module = types.ModuleType("firebase_admin")
         firebase_admin_module._apps = []
@@ -201,6 +231,52 @@ class AnalysisQualityTests(unittest.TestCase):
         evidence_text = candidate_enrichment_service._get_record_value(detail, ["Dan chung", "Dáº«n chá»©ng"])
         self.assertIn("/5", score_text)
         self.assertIn("Classifier", evidence_text)
+
+    def test_enrich_candidates_preserves_existing_core_details(self) -> None:
+        candidate_enrichment_service.embed_text = lambda text, model=None: [1.0, 0.0]
+        candidate_enrichment_service.search_similar_records = (
+            lambda industry, cv_text, top_k=3, min_similarity=0.0, owner_uid=None, exclude_file_names=None, query_vector=None: None
+        )
+
+        enriched = candidate_enrichment_service.enrich_candidates(
+            candidates=[
+                {
+                    "fileName": "candidate-core-details.pdf",
+                    "jobTitle": "Backend Developer",
+                    "industry": "IT",
+                    "department": "Engineering",
+                    "analysis": {
+                        "Tong diem": 42.0,
+                        "Chi tiet": [
+                            {
+                                "Tieu chi": "Kinh nghiem",
+                                "Diem": "10/20",
+                                "Cong thuc": "10/20",
+                                "Dan chung": "3 nam Python FastAPI Docker",
+                                "Giai thich": "Co kinh nghiem backend phu hop",
+                            }
+                        ],
+                    },
+                }
+            ],
+            cv_text_map={
+                "candidate-core-details.pdf": "Python FastAPI Docker backend engineer with REST API experience.",
+            },
+            jd_text="Backend developer can Python FastAPI Docker va xay dung REST API.",
+            hard_filters={},
+            owner_uid="user-123",
+        )
+
+        candidate = enriched[0]
+        details = candidate["analysis"].get("Chi tiet") or []
+        criterion_names = [
+            candidate_enrichment_service._get_record_value(item, ["Tieu chi", "TiÃªu chÃ­"])
+            for item in details
+            if isinstance(item, dict)
+        ]
+
+        self.assertIn("Kinh nghiem", criterion_names)
+        self.assertGreaterEqual(len(details), 2)
 
 
 if __name__ == "__main__":
