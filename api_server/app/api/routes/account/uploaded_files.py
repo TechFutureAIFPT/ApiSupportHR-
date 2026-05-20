@@ -57,6 +57,7 @@ def delete_uploaded_file(file_id: str, current_user: AuthenticatedUser = Depends
 
 
 @router.post("/uploaded-files/{file_id}/touch")
+@router.patch("/uploaded-files/{file_id}/touch")
 def touch_uploaded_file(file_id: str, current_user: AuthenticatedUser = Depends(get_current_user)):
     return {"ok": uploaded_file_service.touch_file(current_user, file_id)}
 

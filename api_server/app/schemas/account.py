@@ -160,6 +160,14 @@ class UserJDTemplateCreateRequest(BaseModel):
     hardFilters: dict[str, Any] = Field(default_factory=dict)
 
 
+class UserJDTemplateUpdateRequest(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    jobPosition: str | None = None
+    jdText: str | None = None
+    hardFilters: dict[str, Any] | None = None
+
+
 class ChatMessageRecordRequest(BaseModel):
     id: str
     author: Literal["user", "bot"]

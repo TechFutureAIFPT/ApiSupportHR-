@@ -44,7 +44,17 @@ def update_template(user: AuthenticatedUser, template_id: str, updates: dict[str
     snapshot = repo.jd_templates().document(template_id).get()
     if not snapshot.exists or (snapshot.to_dict() or {}).get("uid") != user.uid:
         return False
-    repo.jd_templates().document(template_id).set({**updates, "updatedAt": repo.server_timestamp()}, merge=True)
+
+    allowed_fields = {"name", "category", "jobPosition", "jdText", "hardFilters"}
+    clean_updates = {
+        key: value
+        for key, value in updates.items()
+        if key in allowed_fields and value is not None
+    }
+    repo.jd_templates().document(template_id).set(
+        {**clean_updates, "updatedAt": repo.server_timestamp()},
+        merge=True,
+    )
     return True
 
 

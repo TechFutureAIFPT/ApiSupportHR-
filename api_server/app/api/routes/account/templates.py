@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.api.deps import get_current_user
-from app.schemas.account import AuthenticatedUser, UserJDTemplateCreateRequest
+from app.schemas.account import AuthenticatedUser, UserJDTemplateCreateRequest, UserJDTemplateUpdateRequest
 from app.services.account import template_service
 
 
@@ -23,10 +23,10 @@ def create_jd_template(payload: UserJDTemplateCreateRequest, current_user: Authe
 @router.patch("/jd-templates/{template_id}")
 def update_jd_template(
     template_id: str,
-    payload: UserJDTemplateCreateRequest,
+    payload: UserJDTemplateUpdateRequest,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return {"ok": template_service.update_template(current_user, template_id, payload.model_dump())}
+    return {"ok": template_service.update_template(current_user, template_id, payload.model_dump(exclude_unset=True))}
 
 
 @router.delete("/jd-templates/{template_id}")
