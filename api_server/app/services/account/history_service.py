@@ -146,7 +146,7 @@ def save_history_session(user: AuthenticatedUser, payload: dict[str, Any]) -> st
 
 def fetch_recent_history(user: AuthenticatedUser, limit_count: int = 20, user_email: str | None = None) -> list[dict[str, Any]]:
     docs = list(repo.cv_history().where("uid", "==", user.uid).stream())
-    ordered = sorted(docs, key=lambda doc: int((doc.to_dict() or {}).get("timestamp") or 0), reverse=True)
+    ordered = sorted_docs(docs, "timestamp")
     items = []
     for doc in ordered:
         data = doc.to_dict() or {}
