@@ -81,7 +81,7 @@ MIN_EXEMPLAR_SIMILARITY = 0.72
 MAX_HISTORY_LOOKBACK = 50
 MAX_EXEMPLARS = 2
 MAX_TOP_PREDICTIONS = 3
-APPROVED_EMBEDDING_MODEL = "text-embedding-004"
+APPROVED_EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 def _normalize_file_name(value: str) -> str:

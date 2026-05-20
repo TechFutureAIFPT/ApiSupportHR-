@@ -1185,7 +1185,6 @@ def _analysis_generation_config(*, include_schema: bool) -> dict[str, Any]:
         "temperature": 0.1,
         "topP": 0.8,
         "topK": 40,
-        "thinkingConfig": {"thinkingBudget": 0},
     }
     if include_schema:
         config["responseSchema"] = _analysis_response_schema()

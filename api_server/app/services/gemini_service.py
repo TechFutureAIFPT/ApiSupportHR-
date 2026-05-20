@@ -31,7 +31,13 @@ def _normalize_config(value: Any) -> Any:
     if isinstance(value, dict):
         normalized: Dict[str, Any] = {}
         for key, inner in value.items():
+            if inner is None:
+                continue
             normalized_key = _camel_to_snake(key)
+            if normalized_key == "thinking_config":
+                # The Python SDK can fail on no-op thinkingConfig payloads for
+                # some Flash aliases. Omitting it keeps the request portable.
+                continue
             if normalized_key == "response_schema":
                 # The schema contains output field names such as candidateName.
                 # Do not snake_case nested JSON Schema properties.
@@ -62,11 +68,12 @@ def _get_keys() -> List[str]:
 
 
 def _fallback_models(model: str) -> Iterable[str]:
-    yield model
-    if model != "gemini-2.5-flash":
-        yield "gemini-2.5-flash"
-    if model != "gemini-flash-latest":
-        yield "gemini-flash-latest"
+    seen: set[str] = set()
+    for candidate in (model, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+        normalized = (candidate or "").strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            yield normalized
 
 
 def _fallback_embedding_models(model: str) -> Iterable[str]:

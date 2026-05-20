@@ -144,7 +144,6 @@ def translate_to_vietnamese(text: str) -> str:
                 "temperature": 0.1,
                 "topP": 0.8,
                 "topK": 20,
-                "thinkingConfig": {"thinkingBudget": 0},
             },
         )
     )
