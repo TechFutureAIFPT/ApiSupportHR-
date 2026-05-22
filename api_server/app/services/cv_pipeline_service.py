@@ -21,6 +21,7 @@ from app.services.candidate_enrichment_service import enrich_candidates
 from app.services.cv_analysis_service import (
     analyze_cv_entries_async,
     attach_advanced_score_breakdowns,
+    build_rule_based_fallback_candidates,
     normalize_candidates_against_weights,
 )
 from app.services.language_service import build_analysis_text_bundle, normalize_cv_text_for_analysis_async
@@ -460,7 +461,20 @@ async def run_smart_cv_analysis(
             )
         except Exception as error:
             pipeline["warnings"].append(f"gemini_analysis_failed:{error}")
-            base_candidates = [_failed_candidate(entry, error) for entry in miss_entries]
+            pipeline["aiFallback"] = True
+            base_candidates = build_rule_based_fallback_candidates(
+                jd_text,
+                weights,
+                hard_filters,
+                [
+                    {
+                        "file_name": _entry_file_name(entry),
+                        "text": str(entry.get("text") or ""),
+                    }
+                    for entry in miss_entries
+                ],
+                failure_reason=str(error),
+            )
 
         for candidate in base_candidates:
             if isinstance(candidate, dict):

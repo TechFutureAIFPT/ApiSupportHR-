@@ -424,6 +424,277 @@ def _parse_score_pair(score_text: str, formula_text: str = "") -> tuple[float, f
     return max(0.0, raw), max(0.0, max_score or raw)
 
 
+def _extract_year_count(text: str) -> float:
+    normalized = _normalize_lookup(text)
+    years: list[float] = []
+    for match in re.finditer(r"(\d+(?:[.,]\d+)?)\s*\+?\s*(?:years?|yrs?|nam|year)", normalized):
+        try:
+            years.append(float(match.group(1).replace(",", ".")))
+        except ValueError:
+            continue
+    return max(years) if years else 0.0
+
+
+def _extract_min_year_count(hard_filters: Dict[str, Any], jd_text: str) -> float:
+    for key in ("minExp", "min_exp", "experience", "experienceYears", "years"):
+        value = hard_filters.get(key)
+        if value not in (None, ""):
+            parsed = _extract_numeric_score(str(value))
+            if parsed is not None:
+                return parsed
+    return _extract_year_count(jd_text)
+
+
+def _text_overlap_ratio(jd_text: str, cv_text: str) -> tuple[float, list[str], list[str]]:
+    jd_tokens = {
+        token
+        for token in _normalize_lookup(jd_text).split()
+        if len(token) >= 3 and token not in {"and", "the", "can", "for", "voi", "cac", "ung", "vien", "kinh", "nghiem"}
+    }
+    if not jd_tokens:
+        return 0.0, [], []
+
+    cv_lookup = set(_normalize_lookup(cv_text).split())
+    matched = sorted(token for token in jd_tokens if token in cv_lookup)[:12]
+    missing = sorted(token for token in jd_tokens if token not in cv_lookup)[:12]
+    return len(matched) / max(1, len(jd_tokens)), matched, missing
+
+
+def _metric_signal_count(text: str) -> int:
+    normalized = _normalize_lookup(text)
+    patterns = (
+        r"\d+\s*%",
+        r"\d+(?:[.,]\d+)?\s*x",
+        r"\d+\s*(?:trieu|ty|k|m|b|usd)",
+        r"(?:increased|reduced|improved|optimized|launched|delivered|achieved|built|designed|managed)",
+        r"(?:tang|giam|toi uu|trien khai|xay dung|quan ly|dat duoc)",
+    )
+    return sum(1 for pattern in patterns if re.search(pattern, normalized))
+
+
+def _education_ratio(cv_text: str) -> tuple[float, str]:
+    normalized = _normalize_lookup(cv_text)
+    education_terms = (
+        "bachelor",
+        "master",
+        "university",
+        "college",
+        "degree",
+        "certification",
+        "computer science",
+        "dai hoc",
+        "cu nhan",
+        "thac si",
+        "chung chi",
+    )
+    matched = [term for term in education_terms if term in normalized]
+    if matched:
+        return min(1.0, 0.55 + len(matched) * 0.15), ", ".join(matched[:4])
+    return 0.2, "Khong tim thay thong tin hoc van ro rang"
+
+
+def _language_ratio(jd_text: str, cv_text: str, criterion_name: str) -> tuple[float, list[str], list[str]]:
+    required = _extract_required_keywords(jd_text, criterion_name)
+    if not required:
+        required = [keyword for keyword in LANGUAGE_KEYWORDS if _has_alias(cv_text, keyword)]
+    if not required:
+        return 0.5, [], []
+    matched = [keyword for keyword in required if _contains_keyword(cv_text, keyword)]
+    missing = [keyword for keyword in required if keyword not in matched]
+    return len(matched) / max(1, len(required)), matched, missing
+
+
+def _candidate_name_from_text(file_name: str, cv_text: str) -> str:
+    for line in cv_text.splitlines()[:8]:
+        compact = re.sub(r"\s+", " ", line).strip()
+        if not compact or len(compact) > 80:
+            continue
+        if re.search(r"@|\d{4,}|http|www", compact, flags=re.I):
+            continue
+        words = compact.split()
+        if 2 <= len(words) <= 6:
+            return compact
+    return re.sub(r"\.[^.]+$", "", file_name).strip() or file_name
+
+
+def _extract_email(text: str) -> str:
+    match = re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", text, flags=re.I)
+    return match.group(0) if match else ""
+
+
+def _extract_phone(text: str) -> str:
+    match = re.search(r"(?:\+?\d[\s.-]?){9,14}", text)
+    return re.sub(r"\s+", " ", match.group(0)).strip() if match else ""
+
+
+def _fallback_criterion_score(
+    spec: Dict[str, Any],
+    *,
+    jd_text: str,
+    cv_text: str,
+    hard_filters: Dict[str, Any],
+) -> tuple[float, str, str, str]:
+    name = str(spec.get("name") or "Tieu chi")
+    max_score = float(spec.get("max_score") or 0)
+    normalized = str(spec.get("normalized") or _normalize_criterion_name(name))
+    if max_score <= 0:
+        return 0.0, "0", "Tieu chi khong co trong so.", "Khong tinh diem cho tieu chi nay."
+
+    if any(term in normalized for term in ("phu hop", "job fit", "jd")):
+        metrics = _keyword_metrics(jd_text, cv_text, name)
+        required = int(metrics["total_required_keywords"])
+        matched = int(metrics["matched_keywords_count"])
+        if required:
+            ratio = matched / max(1, required)
+            matched_terms = [
+                str(item.get("keyword"))
+                for item in metrics["keywords_list"]
+                if isinstance(item, dict) and item.get("status") == "matched"
+            ][:8]
+            missing_terms = [
+                str(item.get("keyword"))
+                for item in metrics["keywords_list"]
+                if isinstance(item, dict) and item.get("status") == "missing"
+            ][:8]
+        else:
+            ratio, matched_terms, missing_terms = _text_overlap_ratio(jd_text, cv_text)
+        evidence = f"Khop {matched}/{required} keyword JD" if required else f"Khop noi dung JD/CV {round(ratio * 100)}%"
+        if matched_terms:
+            evidence += f": {', '.join(matched_terms)}"
+        if missing_terms:
+            evidence += f" | Thieu: {', '.join(missing_terms[:5])}"
+        return max_score * min(1.0, ratio), evidence, "Keyword overlap fallback", "Fallback scoring dung keyword va noi dung JD/CV khi AI generation tam thoi loi."
+
+    if any(term in normalized for term in ("ky nang", "skill", "technical")):
+        metrics = _keyword_metrics(jd_text, cv_text, name)
+        required = int(metrics["total_required_keywords"])
+        matched = int(metrics["matched_keywords_count"])
+        ratio = matched / max(1, required) if required else min(1.0, len([kw for kw in TECH_KEYWORDS if _contains_keyword(cv_text, kw)]) / 8)
+        matched_terms = [
+            str(item.get("keyword"))
+            for item in metrics.get("keywords_list", [])
+            if isinstance(item, dict) and item.get("status") == "matched"
+        ][:8]
+        evidence = f"Khop {matched}/{required} ky nang yeu cau"
+        if matched_terms:
+            evidence += f": {', '.join(matched_terms)}"
+        return max_score * ratio, evidence, "Skill keyword fallback", "Cham diem dua tren ky nang xuat hien trong JD va CV."
+
+    if any(term in normalized for term in ("kinh nghiem", "experience", "seniority")):
+        cv_years = _extract_year_count(cv_text)
+        min_years = _extract_min_year_count(hard_filters, jd_text)
+        ratio = min(1.0, cv_years / min_years) if min_years > 0 and cv_years > 0 else (0.65 if cv_years > 0 else 0.25)
+        evidence = f"CV co khoang {_format_score_value(cv_years)} nam; yeu cau {_format_score_value(min_years)} nam."
+        return max_score * ratio, evidence, "Experience fallback", "Cham diem dua tren so nam kinh nghiem tim thay trong CV/JD."
+
+    if any(term in normalized for term in ("hoc van", "education", "degree")):
+        ratio, evidence = _education_ratio(cv_text)
+        return max_score * ratio, evidence, "Education fallback", "Cham diem dua tren dau hieu bang cap/chung chi trong CV."
+
+    if any(term in normalized for term in ("thanh tich", "kpi", "achievement", "impact")):
+        signal_count = _metric_signal_count(cv_text)
+        ratio = min(1.0, signal_count / 3)
+        evidence = f"Tim thay {signal_count} dau hieu KPI/thanh tich trong CV."
+        return max_score * ratio, evidence, "Achievement fallback", "Cham diem dua tren so lieu, KPI va dong tu hanh dong."
+
+    if _is_language_criterion(name):
+        ratio, matched, missing = _language_ratio(jd_text, cv_text, name)
+        evidence = "Ngon ngu khop: " + (", ".join(matched) if matched else "chua ro")
+        if missing:
+            evidence += f" | Thieu: {', '.join(missing)}"
+        return max_score * ratio, evidence, "Language fallback", "Cham diem dua tren ngon ngu/chung chi tim thay trong CV."
+
+    ratio, matched_terms, missing_terms = _text_overlap_ratio(jd_text, cv_text)
+    evidence = f"Khop text JD/CV {round(ratio * 100)}%"
+    if matched_terms:
+        evidence += f": {', '.join(matched_terms[:6])}"
+    if missing_terms:
+        evidence += f" | Thieu: {', '.join(missing_terms[:4])}"
+    return max_score * min(1.0, max(0.25, ratio)), evidence, "Generic fallback", "Cham diem tam thoi dua tren do khop noi dung."
+
+
+def build_rule_based_fallback_candidates(
+    jd_text: str,
+    weights: Dict[str, Any],
+    hard_filters: Dict[str, Any],
+    cv_entries: List[Dict[str, str]],
+    *,
+    failure_reason: str = "",
+) -> List[Dict[str, Any]]:
+    """Create usable candidate results when provider generation is unavailable."""
+    criterion_specs = _extract_criterion_specs(weights)
+    if not criterion_specs:
+        criterion_specs = [{"name": "Phu hop JD", "max_score": 100.0, "normalized": "phu hop jd"}]
+
+    candidates: List[Dict[str, Any]] = []
+    for entry in cv_entries:
+        file_name = str(entry.get("file_name") or entry.get("fileName") or "unknown-file").strip() or "unknown-file"
+        cv_text = str(entry.get("text") or "")
+        details: List[Dict[str, Any]] = []
+        total_score = 0.0
+
+        for spec in criterion_specs:
+            earned, evidence, formula, explanation = _fallback_criterion_score(
+                spec,
+                jd_text=jd_text,
+                cv_text=cv_text,
+                hard_filters=hard_filters,
+            )
+            max_score = float(spec.get("max_score") or 0)
+            earned = max(0.0, min(max_score, round(earned, 1)))
+            total_score += earned
+            details.append(
+                _detail_item(
+                    str(spec.get("name") or "Tieu chi"),
+                    f"{_format_score_value(earned)}/{_format_score_value(max_score)}" if max_score > 0 else _format_score_value(earned),
+                    formula,
+                    evidence,
+                    explanation,
+                )
+            )
+
+        total_score = max(0.0, min(100.0, round(total_score, 1)))
+        rank = "A" if total_score >= 75 else "B" if total_score >= 50 else "C"
+        analysis: Dict[str, Any] = {
+            "Tong diem": total_score,
+            "T\u1ed5ng \u0111i\u1ec3m": total_score,
+            "Hang": rank,
+            "H\u1ea1ng": rank,
+            "Chi tiet": details,
+            "Chi ti\u1ebft": details,
+            "Diem manh CV": [],
+            "Diem yeu CV": [],
+        }
+        _refresh_candidate_summary(analysis)
+
+        fallback_warning = "AI generation tam thoi loi; da dung fallback keyword/vector scoring."
+        if failure_reason:
+            fallback_warning += f" Ly do: {failure_reason[:180]}"
+
+        candidates.append(
+            {
+                "fileName": file_name,
+                "candidateName": _candidate_name_from_text(file_name, cv_text),
+                "phone": _extract_phone(cv_text),
+                "email": _extract_email(cv_text),
+                "jobTitle": str(hard_filters.get("jobTitle") or hard_filters.get("position") or ""),
+                "industry": str(hard_filters.get("industry") or ""),
+                "department": "",
+                "experienceLevel": "",
+                "status": "SUCCESS",
+                "softFilterWarnings": [fallback_warning],
+                "analysis": analysis,
+                "pipelineMetadata": {
+                    "aiFallback": True,
+                    "fallbackReason": failure_reason[:500],
+                    "fallbackStrategy": "rule_based_keyword_scoring",
+                },
+            }
+        )
+
+    return candidates
+
+
 def _as_advanced_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 

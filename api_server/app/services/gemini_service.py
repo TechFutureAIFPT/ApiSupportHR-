@@ -69,7 +69,7 @@ def _get_keys() -> List[str]:
 
 def _fallback_models(model: str) -> Iterable[str]:
     seen: set[str] = set()
-    for candidate in (model, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+    for candidate in (model, "gemini-2.5-flash", "gemini-2.0-flash"):
         normalized = (candidate or "").strip()
         if normalized and normalized not in seen:
             seen.add(normalized)

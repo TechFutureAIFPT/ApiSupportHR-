@@ -278,6 +278,36 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertIn("Kinh nghiem", criterion_names)
         self.assertGreaterEqual(len(details), 2)
 
+    def test_rule_based_fallback_candidates_are_successful(self) -> None:
+        candidates = cv_analysis_service.build_rule_based_fallback_candidates(
+            "Backend Developer can Python FastAPI PostgreSQL Docker REST API. Minimum 2 years experience.",
+            {
+                "positionRelevance": {"name": "Phu hop JD", "weight": 30},
+                "experience": {"name": "Kinh nghiem", "weight": 25},
+                "skills": {"name": "Ky nang", "weight": 25},
+                "education": {"name": "Hoc van", "weight": 10},
+                "achievements": {"name": "Thanh tich", "weight": 10},
+            },
+            {"minExp": "2", "industry": "IT"},
+            [
+                {
+                    "file_name": "sample_backend_cv.txt",
+                    "text": (
+                        "Nguyen Van A\nBackend Developer with 4 years experience building REST API "
+                        "using Python, FastAPI, PostgreSQL and Docker. Bachelor of Computer Science."
+                    ),
+                }
+            ],
+            failure_reason="provider unavailable",
+        )
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate["status"], "SUCCESS")
+        self.assertTrue(candidate["pipelineMetadata"]["aiFallback"])
+        self.assertGreater(candidate["analysis"]["Tong diem"], 0)
+        self.assertGreaterEqual(len(candidate["analysis"]["Chi tiet"]), 5)
+
 
 if __name__ == "__main__":
     unittest.main()
