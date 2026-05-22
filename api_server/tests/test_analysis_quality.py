@@ -157,6 +157,47 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertIn("=", detail["Cong thuc"])
         self.assertTrue(updated["analysis"]["Diem yeu CV"])
 
+    def test_candidate_name_from_collapsed_vietnamese_cv_text(self) -> None:
+        text = (
+            "CV - L\u00ea Chi\u1ebfn Th\u00f4ng tin c\u00e1 nh\u00e2n "
+            "H\u1ecd t\u00ean: L\u00ea Chi\u1ebfn Gi\u1edbi t\u00ednh: Nam "
+            "Email: lechien@example.com Kinh nghi\u1ec7m: Java Spring Boot"
+        )
+
+        self.assertEqual(
+            cv_analysis_service._candidate_name_from_text("CV_CNTT1.docx", text),
+            "L\u00ea Chi\u1ebfn",
+        )
+
+    def test_candidate_name_from_full_name_label_in_long_line(self) -> None:
+        text = (
+            "Th\u00f4ng tin c\u00e1 nh\u00e2n Full name: Ng\u00f4 Th\u1ecb H\u1ed3ng V\u00e2n "
+            "Date of birth: 1998 Email: hongvan@example.com"
+        )
+
+        self.assertEqual(
+            cv_analysis_service._candidate_name_from_text("CV_CNTT5.docx", text),
+            "Ng\u00f4 Th\u1ecb H\u1ed3ng V\u00e2n",
+        )
+
+    def test_attach_breakdowns_replaces_file_stem_candidate_name(self) -> None:
+        text = (
+            "Th\u00f4ng tin c\u00e1 nh\u00e2n H\u1ecd t\u00ean: Ph\u1ea1m Th\u1ecb Mai Anh "
+            "Email: maianh@example.com Kinh nghi\u1ec7m: Java Spring Boot"
+        )
+        candidate = {"fileName": "CV_CNTT3.docx", "candidateName": "CV_CNTT3", "analysis": {"Chi tiet": []}}
+
+        updated = cv_analysis_service.attach_advanced_score_breakdowns(
+            [candidate],
+            {"CV_CNTT3.docx": text},
+            "Java Developer",
+        )[0]
+
+        self.assertEqual(
+            updated["candidateName"],
+            "Ph\u1ea1m Th\u1ecb Mai Anh",
+        )
+
     def test_enrich_candidates_adds_classifier_backed_industry_fit(self) -> None:
         candidate_enrichment_service.embed_text = lambda text, model=None: [1.0, 0.0]
         candidate_enrichment_service.search_similar_records = (

@@ -504,16 +504,128 @@ def _language_ratio(jd_text: str, cv_text: str, criterion_name: str) -> tuple[fl
     return len(matched) / max(1, len(required)), matched, missing
 
 
+_NAME_STOP_LABELS = (
+    "gioi tinh",
+    "ngay sinh",
+    "nam sinh",
+    "date of birth",
+    "birth date",
+    "dia chi",
+    "address",
+    "dien thoai",
+    "so dien thoai",
+    "phone",
+    "mobile",
+    "email",
+    "muc tieu",
+    "objective",
+    "tom tat",
+    "summary",
+    "hoc van",
+    "education",
+    "kinh nghiem",
+    "experience",
+    "ky nang",
+    "skills",
+    "du an",
+    "projects",
+    "chung chi",
+    "certifications",
+    "giai thuong",
+    "awards",
+    "nguoi tham chieu",
+    "references",
+    "thong tin",
+    "personal information",
+    "lien he",
+    "contact",
+    "vi tri ung tuyen",
+    "position",
+)
+
+_NAME_REJECT_TERMS = (
+    "curriculum vitae",
+    "resume",
+    "thong tin",
+    "ca nhan",
+    "muc tieu",
+    "hoc van",
+    "kinh nghiem",
+    "ky nang",
+    "developer",
+    "engineer",
+    "intern",
+    "candidate",
+    "ung vien",
+)
+
+
+def _fold_for_name_lookup(value: str) -> str:
+    folded_chars: list[str] = []
+    for char in value:
+        if char in {"d", "D", "\u0111", "\u0110"}:
+            folded_chars.append("d")
+            continue
+        decomposed = unicodedata.normalize("NFD", char)
+        base_chars = [item for item in decomposed if unicodedata.category(item) != "Mn"]
+        folded_chars.append((base_chars[0] if base_chars else char).lower())
+    return "".join(folded_chars)
+
+
+def _clean_candidate_name(value: str) -> str:
+    candidate = re.sub(r"[\|/\\]+", " ", value or "")
+    candidate = re.sub(r"\s+", " ", candidate).strip(" \t\r\n:-,.;()[]{}\u2013\u2014")
+    candidate = re.sub(r"^(?:cv|resume)\s*[-:\u2013\u2014]\s*", "", candidate, flags=re.I).strip()
+    if not candidate or len(candidate) > 70:
+        return ""
+    if re.search(r"@|\d|http|www|_", candidate, flags=re.I):
+        return ""
+
+    folded = _normalize_lookup(candidate)
+    if any(term in folded for term in _NAME_REJECT_TERMS):
+        return ""
+
+    words = candidate.split()
+    if not 2 <= len(words) <= 6:
+        return ""
+    if not any(char.isalpha() for char in candidate):
+        return ""
+    return candidate
+
+
+def _candidate_name_segment(compact_text: str, folded_text: str, start: int) -> str:
+    stop = len(compact_text)
+    for label in _NAME_STOP_LABELS:
+        label_pattern = re.escape(label).replace(r"\ ", r"\s+")
+        match = re.search(r"(?:^|[\s,;|])" + label_pattern + r"\s*[-:]?", folded_text[start:])
+        if match:
+            stop = min(stop, start + match.start())
+    return compact_text[start:stop]
+
+
 def _candidate_name_from_text(file_name: str, cv_text: str) -> str:
-    for line in cv_text.splitlines()[:8]:
-        compact = re.sub(r"\s+", " ", line).strip()
-        if not compact or len(compact) > 80:
-            continue
-        if re.search(r"@|\d{4,}|http|www", compact, flags=re.I):
-            continue
-        words = compact.split()
-        if 2 <= len(words) <= 6:
-            return compact
+    compact_text = re.sub(r"\s+", " ", cv_text or "").strip()
+    folded_text = _fold_for_name_lookup(compact_text)
+
+    label_patterns = (
+        r"(?:^|[\s,;|])(?:ho\s*ten|full\s*name|candidate\s*name|ten\s*ung\s*vien)\s*[-:]?\s*",
+        r"(?:^|[\s,;|])name\s*[-:]\s*",
+    )
+    for pattern in label_patterns:
+        for match in re.finditer(pattern, folded_text):
+            candidate = _clean_candidate_name(_candidate_name_segment(compact_text, folded_text, match.end()))
+            if candidate:
+                return candidate
+
+    for match in re.finditer(r"(?:^|[\s,;|])(?:cv|resume)\s*[-:\u2013\u2014]\s*", folded_text):
+        candidate = _clean_candidate_name(_candidate_name_segment(compact_text, folded_text, match.end()))
+        if candidate:
+            return candidate
+
+    for line in (cv_text or "").splitlines()[:20]:
+        candidate = _clean_candidate_name(line)
+        if candidate:
+            return candidate
     return re.sub(r"\.[^.]+$", "", file_name).strip() or file_name
 
 
@@ -1399,6 +1511,16 @@ def attach_advanced_score_breakdowns(
             continue
         file_name = str(candidate.get("fileName") or candidate.get("file_name") or "")
         cv_text = cv_text_map.get(file_name) or cv_text_map.get(file_name.lower()) or str(candidate.get("_cvText") or "")
+        file_stem = re.sub(r"\.[^.]+$", "", file_name).strip()
+        current_name = str(candidate.get("candidateName") or "").strip()
+        if cv_text and (
+            not current_name
+            or _normalize_lookup(current_name) == _normalize_lookup(file_stem)
+            or _normalize_lookup(current_name) in {"unknown", "n a", "na"}
+        ):
+            derived_name = _candidate_name_from_text(file_name, cv_text)
+            if derived_name and _normalize_lookup(derived_name) != _normalize_lookup(file_stem):
+                candidate["candidateName"] = derived_name
         analysis = candidate.get("analysis")
         if not isinstance(analysis, dict):
             continue

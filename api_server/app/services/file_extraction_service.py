@@ -37,7 +37,8 @@ def _correct_ocr_errors(text: str) -> str:
     cleaned = text
     for source, target in replacements:
         cleaned = cleaned.replace(source, target)
-    return " ".join(cleaned.split())
+    normalized_lines = [" ".join(line.split()) for line in cleaned.splitlines()]
+    return "\n".join(line for line in normalized_lines if line)
 
 
 def _is_text_sufficient(text: str) -> bool:
@@ -117,9 +118,11 @@ def _extract_text_from_docx(file_bytes: bytes) -> str:
     table_lines: list[str] = []
     for table in document.tables:
         for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-            if cells:
-                table_lines.append(" | ".join(cells))
+            for cell in row.cells:
+                for line in cell.text.splitlines():
+                    line = line.strip()
+                    if line and (not table_lines or table_lines[-1] != line):
+                        table_lines.append(line)
 
     return "\n".join(paragraphs + table_lines)
 
