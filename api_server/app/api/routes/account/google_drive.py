@@ -67,6 +67,7 @@ def disconnect_google_drive(current_user: AuthenticatedUser = Depends(get_curren
 def list_google_drive_files(
     search: str | None = None,
     folder_id: str | None = None,
+    mime_types: str | None = None,
     page_token: str | None = None,
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: AuthenticatedUser = Depends(get_current_user),
@@ -76,6 +77,7 @@ def list_google_drive_files(
             current_user,
             search=search,
             folder_id=folder_id,
+            mime_types=mime_types,
             page_size=page_size,
             page_token=page_token,
         )

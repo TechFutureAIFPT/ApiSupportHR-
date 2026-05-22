@@ -23,6 +23,7 @@ GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 GOOGLE_DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 GOOGLE_DRIVE_STATE_TTL_MS = 10 * 60 * 1000
 GOOGLE_TOKEN_REFRESH_SKEW_MS = 60 * 1000
+GOOGLE_DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 GOOGLE_DRIVE_SCOPES = [
     "openid",
     "email",
@@ -370,6 +371,21 @@ def _escape_drive_query(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
+def _parse_mime_types(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return sorted({item.strip() for item in value.split(",") if item.strip()})
+
+
+def _build_mime_type_query(mime_types: list[str]) -> str | None:
+    if not mime_types:
+        return None
+
+    parts = [f"mimeType = '{_escape_drive_query(GOOGLE_DRIVE_FOLDER_MIME_TYPE)}'"]
+    parts.extend(f"mimeType = '{_escape_drive_query(mime_type)}'" for mime_type in mime_types)
+    return f"({' or '.join(parts)})"
+
+
 def _normalize_file_item(item: dict[str, Any]) -> dict[str, Any]:
     size_value = item.get("size")
     try:
@@ -403,6 +419,7 @@ def list_files(
     *,
     search: str | None = None,
     folder_id: str | None = None,
+    mime_types: str | None = None,
     page_size: int = 20,
     page_token: str | None = None,
 ) -> dict[str, Any]:
@@ -414,6 +431,9 @@ def list_files(
         query_parts.append(f"'{_escape_drive_query(folder_id)}' in parents")
     if search:
         query_parts.append(f"name contains '{_escape_drive_query(search)}'")
+    mime_query = _build_mime_type_query(_parse_mime_types(mime_types))
+    if mime_query:
+        query_parts.append(mime_query)
 
     payload = _request_json(
         _build_drive_url(
@@ -424,7 +444,7 @@ def list_files(
                 "spaces": "drive",
                 "supportsAllDrives": "true",
                 "includeItemsFromAllDrives": "true",
-                "orderBy": "modifiedTime desc",
+                "orderBy": "folder,name_natural",
                 "fields": "nextPageToken,files(id,name,mimeType,size,modifiedTime,iconLink,webViewLink,parents,owners(displayName,emailAddress))",
                 "q": " and ".join(query_parts),
             },
