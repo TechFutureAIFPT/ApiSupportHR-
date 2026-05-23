@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import math
+import json
 import re
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import joblib
+
+from app.core.config import get_settings
 
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "text_classifier_model.pkl"
@@ -46,6 +51,103 @@ def _load_model() -> Any:
             raise RuntimeError(_model_error) from error
 
     return _model_cache
+
+
+def _round_score(value: Any) -> float | None:
+    if not isinstance(value, (int, float)):
+        return None
+    return round(float(value), 4)
+
+
+def _derived_remote_status_url(classify_url: str) -> str:
+    if "classify-industry" in classify_url:
+        return classify_url.replace("classify-industry", "classifier-status")
+    return classify_url.rstrip("/") + "/status"
+
+
+def _http_error_detail(error: HTTPError) -> str:
+    try:
+        raw = error.read().decode("utf-8", errors="replace")
+        payload = json.loads(raw) if raw else {}
+        if isinstance(payload, dict):
+            detail = payload.get("detail") or payload.get("message") or payload.get("error")
+            if detail:
+                return str(detail)
+        return raw or str(error)
+    except Exception:
+        return str(error)
+
+
+def _remote_request(url: str, payload: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"} if data is not None else {},
+        method="POST" if data is not None else "GET",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            parsed = json.loads(body) if body else {}
+            return parsed if isinstance(parsed, dict) else {}
+    except HTTPError as error:
+        detail = _http_error_detail(error)
+        if error.code in {404, 503}:
+            raise FileNotFoundError(detail) from error
+        raise RuntimeError(detail) from error
+    except URLError as error:
+        raise RuntimeError(str(error)) from error
+
+
+def _classify_remote(cleaned_text: str, top_k: int) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.local_classifier_remote_classify_url:
+        raise FileNotFoundError("Remote classifier URL is not configured.")
+
+    payload = {
+        "cv_text": cleaned_text,
+        "top_k": top_k,
+    }
+    result = _remote_request(
+        settings.local_classifier_remote_classify_url,
+        payload,
+        settings.local_classifier_remote_timeout_seconds,
+    )
+    top_predictions = []
+    for item in list(result.get("top_predictions") or []):
+        if not isinstance(item, dict):
+            continue
+        top_predictions.append(
+            {
+                "label": str(item.get("label") or ""),
+                "score": _round_score(item.get("score")),
+            }
+        )
+
+    return {
+        "predicted_label": str(result.get("predicted_label") or result.get("label") or "unknown"),
+        "confidence": _round_score(result.get("confidence")),
+        "top_predictions": top_predictions,
+        "model_source": str(result.get("model_source") or "remote://classifier"),
+    }
+
+
+def _remote_status() -> dict[str, Any]:
+    settings = get_settings()
+    classify_url = settings.local_classifier_remote_classify_url
+    status_url = settings.local_classifier_remote_status_url or _derived_remote_status_url(classify_url)
+    if not status_url:
+        raise FileNotFoundError("Remote classifier status URL is not configured.")
+    result = _remote_request(status_url, None, settings.local_classifier_remote_timeout_seconds)
+    labels = [str(label) for label in list(result.get("labels") or [])]
+    return {
+        "ready": bool(result.get("ready")),
+        "model_source": str(result.get("model_source") or "remote://classifier"),
+        "label_count": int(result.get("label_count") or len(labels)),
+        "labels": labels,
+        "error": result.get("error"),
+    }
 
 
 def _softmax(values: list[float]) -> list[float]:
@@ -94,6 +196,14 @@ def classify_cv_text(cv_text: str, top_k: int = 3) -> dict[str, Any]:
     if not cleaned_text:
         raise ValueError("CV text is empty after cleaning.")
 
+    settings = get_settings()
+    if settings.local_classifier_mode in {"remote", "auto"} and settings.local_classifier_remote_classify_url:
+        try:
+            return _classify_remote(cleaned_text, top_k)
+        except Exception:
+            if settings.local_classifier_mode == "remote":
+                raise
+
     model = _load_model()
 
     try:
@@ -121,6 +231,23 @@ def classify_cv_text(cv_text: str, top_k: int = 3) -> dict[str, Any]:
 
 
 def get_classifier_status() -> dict[str, Any]:
+    settings = get_settings()
+    has_remote_status = bool(
+        settings.local_classifier_remote_status_url or settings.local_classifier_remote_classify_url
+    )
+    if settings.local_classifier_mode in {"remote", "auto"} and has_remote_status:
+        try:
+            return _remote_status()
+        except Exception as error:
+            if settings.local_classifier_mode == "remote":
+                return {
+                    "ready": False,
+                    "model_source": settings.local_classifier_remote_classify_url,
+                    "label_count": 0,
+                    "labels": [],
+                    "error": str(error),
+                }
+
     if MODEL_PATH.is_file():
         try:
             model = _load_model()

@@ -19,6 +19,7 @@ GOOGLE_DRIVE_CONNECTIONS_COLLECTION = "googleDriveConnections"
 GOOGLE_DRIVE_OAUTH_STATES_COLLECTION = "googleDriveOAuthStates"
 ANALYSIS_FEEDBACK_COLLECTION = "analysisFeedback"
 APPROVED_EXEMPLARS_COLLECTION = "approvedExemplars"
+ANALYSIS_JOBS_COLLECTION = "analysisJobs"
 
 
 def db():
@@ -75,6 +76,10 @@ def analysis_feedback():
 
 def approved_exemplars():
     return db().collection(APPROVED_EXEMPLARS_COLLECTION)
+
+
+def analysis_jobs():
+    return db().collection(ANALYSIS_JOBS_COLLECTION)
 
 
 def create_document(collection_ref):

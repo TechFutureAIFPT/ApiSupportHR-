@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_user, get_optional_current_user
 from app.schemas.analysis import (
+    AnalysisJobAcceptedResponse,
+    AnalysisJobStatusResponse,
     CandidateEnrichmentRequest,
     CandidateEnrichmentResponse,
     CoreCvAnalysisRequest,
@@ -31,6 +33,7 @@ from app.schemas.workflows import (
     JdStructureResponse,
 )
 from app.schemas.account import AuthenticatedUser
+from app.services.analysis_job_service import get_analysis_job, start_analysis_job
 from app.services.candidate_enrichment_service import enrich_candidates
 from app.services.candidate_refinement_service import refine_cv_profile
 from app.services.cv_pipeline_service import run_smart_cv_analysis
@@ -101,6 +104,51 @@ async def cv_analyze_core(
         candidates=result.get("candidates") or [],
         pipeline=result.get("pipeline") or {},
     )
+
+
+@router.post(
+    "/cv/analyze-core-async",
+    response_model=AnalysisJobAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cv_analyze_core_async(
+    payload: CoreCvAnalysisRequest,
+    current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
+) -> AnalysisJobAcceptedResponse:
+    job = start_analysis_job(payload.model_dump(), current_user=current_user)
+    return AnalysisJobAcceptedResponse(
+        job_id=str(job["job_id"]),
+        status="processing",
+        status_url=f"/api/analysis/status/{job['job_id']}",
+    )
+
+
+@router.post(
+    "/analysis/jobs",
+    response_model=AnalysisJobAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_analysis_job(
+    payload: CoreCvAnalysisRequest,
+    current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
+) -> AnalysisJobAcceptedResponse:
+    job = start_analysis_job(payload.model_dump(), current_user=current_user)
+    return AnalysisJobAcceptedResponse(
+        job_id=str(job["job_id"]),
+        status="processing",
+        status_url=f"/api/analysis/status/{job['job_id']}",
+    )
+
+
+@router.get("/analysis/status/{job_id}", response_model=AnalysisJobStatusResponse)
+async def analysis_job_status(
+    job_id: str,
+    current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
+) -> AnalysisJobStatusResponse:
+    job = get_analysis_job(job_id, current_user=current_user)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis job not found")
+    return AnalysisJobStatusResponse(**job)
 
 
 @router.post("/cv/refine-profile", response_model=CvProfileRefineResponse)

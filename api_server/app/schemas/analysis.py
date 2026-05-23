@@ -65,6 +65,10 @@ class StructuredCandidateAnalysis(BaseModel):
     strengths: List[str] = Field(default_factory=list, alias="Diem manh CV")
     weaknesses: List[str] = Field(default_factory=list, alias="Diem yeu CV")
     education_validation: Dict[str, Any] = Field(default_factory=dict, alias="educationValidation")
+    review_basis: str = Field(default="", alias="Can cu tham dinh")
+    direct_match_matrix: List[Dict[str, Any]] = Field(default_factory=list, alias="Ma tran doi sanh truc tiep")
+    strict_score_breakdown: Dict[str, Any] = Field(default_factory=dict, alias="Phan ra diem so nghiem ngat")
+    interview_questions: List[str] = Field(default_factory=list, alias="Cau hoi phong van")
 
 
 class StructuredCandidateOutput(BaseModel):
@@ -108,6 +112,23 @@ class CoreCvAnalysisRequest(BaseModel):
 class CoreCvAnalysisResponse(BaseModel):
     candidates: List[Dict[str, Any]]
     pipeline: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalysisJobAcceptedResponse(BaseModel):
+    job_id: str
+    status: Literal["processing"] = "processing"
+    status_url: str
+
+
+class AnalysisJobStatusResponse(BaseModel):
+    job_id: str
+    status: Literal["processing", "completed", "failed"]
+    progress: float = 0.0
+    message: str = ""
+    result: Dict[str, Any] | None = None
+    error: str | None = None
+    created_at: str | int | None = None
+    updated_at: str | int | None = None
 
 
 class CvProfileRefineRequest(BaseModel):

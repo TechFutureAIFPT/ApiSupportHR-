@@ -86,6 +86,12 @@ Feedback loop:
 - `GET /api/account/history/feedback`
 - `GET /api/account/history/feedback/stats`
 
+Async CV analysis:
+- `POST /api/cv/analyze-core-async` returns `202 Accepted` with `job_id`.
+- `POST /api/analysis/jobs` is the queue-oriented alias for creating the same analysis job.
+- `GET /api/analysis/status/{job_id}` returns `processing`, `completed`, or `failed` for frontend polling.
+- Completed jobs include the normal `{ candidates, pipeline }` payload and are persisted to Firestore history when the request has a valid Firebase user.
+
 ### Deploy
 
 - Python version is pinned in `.python-version`

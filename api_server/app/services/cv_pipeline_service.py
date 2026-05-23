@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import re
 import time
 import unicodedata
@@ -16,6 +17,7 @@ from app.services.account.cache_service import (
     sync_cache_entry_async,
 )
 from app.services.account.history_service import sync_history_entry
+from app.services.analysis_routing_service import build_routing_metadata_async, default_routing_metadata
 from app.services.analysis_grounding_service import build_approved_grounding_context
 from app.services.candidate_enrichment_service import enrich_candidates
 from app.services.cv_analysis_service import (
@@ -204,6 +206,25 @@ def _build_global_context_notes() -> str:
     )
 
 
+def _format_routing_metadata_note(metadata: dict[str, Any]) -> str:
+    routing = metadata.get("routing_analysis") if isinstance(metadata.get("routing_analysis"), dict) else {}
+    match = metadata.get("mathematical_match") if isinstance(metadata.get("mathematical_match"), dict) else {}
+    found = ", ".join(str(item) for item in list(match.get("core_keywords_found") or [])[:8])
+    missing = ", ".join(str(item) for item in list(match.get("missing_critical_keywords") or [])[:8])
+    metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+    return (
+        "JSON metadata toán học từ hệ thống .pkl:\n"
+        f"{metadata_json}\n"
+        "Diễn giải nhanh cho bước phân tích:\n"
+        f"- Ngành dự đoán: {routing.get('predicted_industry') or 'unknown'} "
+        f"(độ tin cậy {routing.get('confidence_score') or 0}).\n"
+        f"- Độ tương đồng từ vựng TF-IDF giữa JD và CV: {match.get('vocab_similarity_score') or 0.5}.\n"
+        f"- Từ khóa lõi đã thấy: {found or 'không có'}.\n"
+        f"- Từ khóa quan trọng còn thiếu: {missing or 'không có'}.\n"
+        "- Chỉ dùng metadata này làm mốc định lượng hỗ trợ; điểm cuối vẫn phải dựa trên bằng chứng trong JD và CV."
+    )
+
+
 def _failed_candidate(entry: dict[str, Any], error: Exception) -> dict[str, Any]:
     file_name = _entry_file_name(entry)
     return {
@@ -277,6 +298,7 @@ async def _sync_history_safe(
     hard_filters: dict[str, Any],
     candidates: list[dict[str, Any]],
     pipeline: dict[str, Any],
+    cv_source_texts: list[dict[str, str]] | None = None,
 ) -> str | None:
     if user is None:
         return None
@@ -287,6 +309,10 @@ async def _sync_history_safe(
         "hardFilters": hard_filters,
         "candidates": candidates,
         "pipeline": pipeline,
+        "sourceTexts": {
+            "jdText": jd_text,
+            "cvTexts": cv_source_texts or [],
+        },
     }
     try:
         return await asyncio.to_thread(sync_history_entry, user, payload)
@@ -391,6 +417,12 @@ async def run_smart_cv_analysis(
                 }
 
             try:
+                routing_metadata = await build_routing_metadata_async(jd_text, raw_text)
+            except Exception as error:
+                pipeline["warnings"].append(f"routing_metadata_failed:{file_name}:{error}")
+                routing_metadata = default_routing_metadata()
+
+            try:
                 grounding_payload = await build_approved_grounding_context(
                     cv_text=raw_text,
                     analysis_text=str(normalized_payload.get("analysis_text") or raw_text),
@@ -413,9 +445,13 @@ async def run_smart_cv_analysis(
                 }
 
             analysis_text_bundle = build_analysis_text_bundle(normalized_payload)
+            entry_note_parts = [
+                _format_routing_metadata_note(routing_metadata),
+                str(grounding_payload.get("entry_note") or ""),
+            ]
             entry_contexts[file_name] = {
                 "analysis_text": analysis_text_bundle,
-                "entry_note": grounding_payload.get("entry_note") or "",
+                "entry_note": "\n\n".join(part for part in entry_note_parts if part.strip()),
                 "few_shot_examples": grounding_payload.get("few_shot_examples") or "",
             }
             cv_text_map[file_name] = analysis_text_bundle
@@ -434,6 +470,7 @@ async def run_smart_cv_analysis(
                 "wasTranslated": normalized_payload.get("was_translated"),
                 "normalizedTextKey": "normalized_vi_text",
                 "classifier": grounding_payload.get("classifier") or {},
+                "routingMetadata": routing_metadata,
                 "industryHints": grounding_payload.get("industry_hints") or [],
                 "collectionKeys": grounding_payload.get("collection_keys") or [],
                 "ragStatus": rag_status,
@@ -552,6 +589,10 @@ async def run_smart_cv_analysis(
         hard_filters=hard_filters,
         candidates=candidates,
         pipeline=pipeline,
+        cv_source_texts=[
+            {"fileName": file_name, "text": text}
+            for file_name, text in cv_text_by_file_name.items()
+        ],
     )
     if history_id:
         pipeline["historyId"] = history_id
