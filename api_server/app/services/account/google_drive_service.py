@@ -292,6 +292,47 @@ def exchange_code(user: AuthenticatedUser, code: str, state: str, redirect_uri: 
     return _sanitize_status_payload(_connection_ref(user).get().to_dict() or connection_payload)
 
 
+def connect_with_access_token(
+    user: AuthenticatedUser,
+    access_token: str,
+    *,
+    expires_in_seconds: int | None = None,
+    scopes: list[str] | None = None,
+) -> dict[str, Any]:
+    normalized_token = access_token.strip()
+    if not normalized_token:
+        raise GoogleDriveValidationError("Thiếu access token Google Drive.")
+
+    user_info = _fetch_google_user(normalized_token)
+    google_email = str(user_info.get("email") or "").strip().lower()
+    user_email = str(user.email or "").strip().lower()
+    if user_email and google_email and user_email != google_email:
+        raise GoogleDriveValidationError("Tài khoản Google Drive không khớp với tài khoản đang đăng nhập.")
+
+    now = int(time.time() * 1000)
+    current_snapshot = _connection_ref(user).get()
+    current_data = current_snapshot.to_dict() or {}
+    ttl_seconds = max(int(expires_in_seconds or 3600), 60)
+    normalized_scopes = [item.strip() for item in (scopes or []) if item and item.strip()]
+
+    connection_payload = {
+        "uid": user.uid,
+        "email": google_email or user_email,
+        "displayName": str(user_info.get("name") or current_data.get("displayName") or ""),
+        "photoUrl": str(user_info.get("picture") or current_data.get("photoUrl") or ""),
+        "driveUserId": str(user_info.get("sub") or current_data.get("driveUserId") or ""),
+        "accessToken": normalized_token,
+        "refreshToken": current_data.get("refreshToken") or "",
+        "expiresAt": now + (ttl_seconds * 1000),
+        "scopes": normalized_scopes or _normalize_scopes(current_data.get("scopes")) or GOOGLE_DRIVE_SCOPES,
+        "connectedAt": current_data.get("connectedAt") or repo.server_timestamp(),
+        "updatedAt": repo.server_timestamp(),
+    }
+
+    _connection_ref(user).set(connection_payload, merge=True)
+    return _sanitize_status_payload(_connection_ref(user).get().to_dict() or connection_payload)
+
+
 def get_connection_status(user: AuthenticatedUser) -> dict[str, Any]:
     snapshot = _connection_ref(user).get()
     if not snapshot.exists:

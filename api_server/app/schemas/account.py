@@ -202,6 +202,12 @@ class GoogleDriveOAuthExchangeRequest(BaseModel):
     redirectUri: str | None = None
 
 
+class GoogleDriveSessionAuthRequest(BaseModel):
+    accessToken: str
+    expiresInSeconds: int | None = None
+    scopes: list[str] = Field(default_factory=list)
+
+
 class GoogleDriveConnectionStatusResponse(BaseModel):
     connected: bool = False
     email: str | None = None

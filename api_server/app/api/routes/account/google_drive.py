@@ -11,6 +11,7 @@ from app.schemas.account import (
     GoogleDriveImportRequest,
     GoogleDriveImportResponse,
     GoogleDriveOAuthExchangeRequest,
+    GoogleDriveSessionAuthRequest,
     GoogleDriveOAuthUrlRequest,
     GoogleDriveOAuthUrlResponse,
 )
@@ -50,6 +51,22 @@ def exchange_google_drive_code(
             code=payload.code,
             state=payload.state,
             redirect_uri=payload.redirectUri,
+        )
+    except Exception as error:
+        raise_google_drive_http_error(error)
+
+
+@router.post("/google-drive/session-auth", response_model=GoogleDriveConnectionStatusResponse)
+def connect_google_drive_with_session(
+    payload: GoogleDriveSessionAuthRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        return google_drive_service.connect_with_access_token(
+            current_user,
+            access_token=payload.accessToken,
+            expires_in_seconds=payload.expiresInSeconds,
+            scopes=payload.scopes,
         )
     except Exception as error:
         raise_google_drive_http_error(error)
