@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import get_settings
 from app.services.gemini_service import embed_text
+from app.services.role_profile_service import get_role_requirements, is_generic_role, resolve_role_profile
 from app.services.vector_store_service import search_similar_records
 
 
@@ -221,6 +222,101 @@ def _extract_companies_from_candidate(candidate: Dict[str, Any]) -> List[str]:
     return [name for name in COMPANY_NAME_WORDS if name in evidence]
 
 
+def _contains_lookup_term(text: str, term: str) -> bool:
+    normalized_text = f" {_normalize_lookup_key(text)} "
+    normalized_term = _normalize_lookup_key(term)
+    return bool(normalized_term and f" {normalized_term} " in normalized_text)
+
+
+def _split_evidence_sentences(text: str) -> List[str]:
+    return [
+        sentence.strip()[:280]
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+|[;•]", text or "")
+        if len(sentence.strip()) >= 8
+    ][:80]
+
+
+def _find_best_evidence_sentence(text: str, terms: List[str]) -> str:
+    sentences = _split_evidence_sentences(text)
+    if not sentences:
+        return ""
+
+    normalized_terms = [_normalize_lookup_key(term) for term in terms if _normalize_lookup_key(term)]
+    if not normalized_terms:
+        return sentences[0]
+
+    ranked: List[Tuple[float, str]] = []
+    for sentence in sentences:
+        normalized_sentence = f" {_normalize_lookup_key(sentence)} "
+        score = 0.0
+        for normalized_term in normalized_terms:
+            if f" {normalized_term} " in normalized_sentence or normalized_term in normalized_sentence:
+                score += max(1.0, len(normalized_term) / 10)
+        if score > 0:
+            ranked.append((score, sentence))
+
+    if not ranked:
+        return ""
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked[0][1]
+
+
+def _build_candidate_evidence_corpus(candidate: Dict[str, Any], cv_text: str = "") -> str:
+    analysis = candidate.get("analysis") or {}
+    details = _get_analysis_details(analysis)
+    strengths = analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV") or analysis.get("Ãƒâ€žÃ‚ÂiÃƒÂ¡Ã‚Â»Ã†â€™m mÃƒÂ¡Ã‚ÂºÃ‚Â¡nh CV") or []
+    texts = [
+        cv_text,
+        candidate.get("jobTitle", ""),
+        candidate.get("industry", ""),
+        candidate.get("department", ""),
+        *[str(item.get("DÃ¡ÂºÂ«n chÃ¡Â»Â©ng") or item.get("DÃƒÂ¡Ã‚ÂºÃ‚Â«n chÃƒÂ¡Ã‚Â»Ã‚Â©ng") or "") for item in details if isinstance(item, dict)],
+        *[str(item) for item in strengths],
+    ]
+    return " ".join(str(text or "") for text in texts if str(text or "").strip())
+
+
+def _extract_skills_from_jd(jd_text: str, role_profile: Dict[str, Any] | None = None) -> List[str]:
+    if role_profile and not is_generic_role(role_profile):
+        extracted: List[str] = []
+        for requirement in get_role_requirements(role_profile):
+            requirement_terms = [
+                *list(requirement.get("terms") or []),
+                *list(requirement.get("equivalentTerms") or []),
+                *list(requirement.get("evidenceTerms") or []),
+            ]
+            if any(_contains_lookup_term(jd_text, term) for term in requirement_terms):
+                extracted.append(str(requirement.get("label") or ""))
+        core_requirements = [str(item.get("label") or "") for item in role_profile.get("coreRequirements") or []]
+        if extracted:
+            return list(dict.fromkeys([item for item in extracted if item]))
+        return list(dict.fromkeys([item for item in core_requirements if item]))
+
+    lower = jd_text.lower()
+    return [skill for skill in SKILL_KEYWORDS if skill.lower() in lower]
+
+
+def _extract_skills_from_candidate(
+    candidate: Dict[str, Any],
+    cv_text: str = "",
+    role_profile: Dict[str, Any] | None = None,
+) -> List[str]:
+    combined = _build_candidate_evidence_corpus(candidate, cv_text).lower()
+    if role_profile and not is_generic_role(role_profile):
+        extracted: List[str] = []
+        for requirement in get_role_requirements(role_profile):
+            requirement_terms = [
+                *list(requirement.get("terms") or []),
+                *list(requirement.get("equivalentTerms") or []),
+                *list(requirement.get("evidenceTerms") or []),
+            ]
+            if any(_contains_lookup_term(combined, term) for term in requirement_terms):
+                extracted.append(str(requirement.get("label") or ""))
+        return list(dict.fromkeys([item for item in extracted if item]))
+
+    return [skill for skill in SKILL_KEYWORDS if skill.lower() in combined]
+
+
 def _check_bias_risk(filters: Dict[str, Any]) -> List[str]:
     warnings: List[str] = []
     age = filters.get("age") or {}
@@ -335,7 +431,7 @@ def _analyze_career_velocity(experience_text: str) -> Dict[str, Any]:
     return {"peakLevel": peak["level"], "peakTitle": peak["title"], "totalMonths": total_months, "promotionMonths": promotion_months, "promotionCount": promotion_count, "avgMonthsPerLevel": avg_months, "potentialScore": potential_score, "velocityTag": tag}
 
 
-def _score_skill_match(jd_skills: List[str], candidate_skills: List[str]) -> Dict[str, Any]:
+def _score_skill_match_legacy(jd_skills: List[str], candidate_skills: List[str]) -> Dict[str, Any]:
     cand_set = {skill.lower() for skill in candidate_skills}
     matched: List[str] = []
     unmatched: List[str] = []
@@ -367,6 +463,123 @@ def _score_skill_match(jd_skills: List[str], candidate_skills: List[str]) -> Dic
         "transferMatches": transfer_matches,
         "familyClusters": list(dict.fromkeys(clusters)),
         "matchRate": match_rate,
+    }
+
+
+def _score_generic_skill_match(jd_skills: List[str], candidate_skills: List[str]) -> Dict[str, Any]:
+    base = _score_skill_match_legacy(jd_skills, candidate_skills)
+    base["matchedRequirements"] = list(base.get("matchedSkills") or [])
+    base["missingRequirements"] = list(base.get("unmatchedSkills") or [])
+    base["evidenceMatches"] = []
+    base["roleWeightedScore"] = 0.0
+    base["uiSections"] = ["General fit"]
+    return base
+
+
+def _score_skill_match(
+    jd_skills: List[str],
+    candidate_skills: List[str],
+    *,
+    role_profile: Dict[str, Any] | None = None,
+    jd_text: str = "",
+    cv_text: str = "",
+    candidate: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    if not role_profile or is_generic_role(role_profile):
+        return _score_generic_skill_match(jd_skills, candidate_skills)
+
+    candidate_payload = candidate or {}
+    evidence_corpus = _build_candidate_evidence_corpus(candidate_payload, cv_text)
+    requirements = get_role_requirements(role_profile)
+    matched: List[str] = []
+    unmatched: List[str] = []
+    transfer_matches: List[str] = []
+    family_clusters: List[str] = []
+    evidence_matches: List[Dict[str, Any]] = []
+    total_weight = 0.0
+    earned_weight = 0.0
+
+    for requirement in requirements:
+        requirement_label = str(requirement.get("label") or "").strip()
+        if not requirement_label:
+            continue
+
+        if jd_skills and requirement_label not in jd_skills:
+            continue
+
+        weight = float(requirement.get("weight") or 1.0)
+        total_weight += weight
+        section = str(requirement.get("section") or "General fit")
+        family_clusters.append(section)
+        terms = [*list(requirement.get("terms") or []), *list(requirement.get("evidenceTerms") or [])]
+        equivalent_terms = list(requirement.get("equivalentTerms") or [])
+        jd_terms = [requirement_label, *terms, *equivalent_terms]
+        jd_evidence = _find_best_evidence_sentence(jd_text, jd_terms) or f"JD co yeu cau lien quan den {requirement_label}."
+
+        exact_term = next((term for term in terms if _contains_lookup_term(evidence_corpus, term)), "")
+        transfer_term = next((term for term in equivalent_terms if _contains_lookup_term(evidence_corpus, term)), "")
+        cv_terms = [value for value in [exact_term, transfer_term, requirement_label, *terms, *equivalent_terms] if value]
+        cv_evidence = _find_best_evidence_sentence(evidence_corpus, cv_terms)
+
+        if exact_term and cv_evidence:
+            matched.append(requirement_label)
+            earned_weight += weight
+            evidence_matches.append(
+                {
+                    "section": section,
+                    "requirement": requirement_label,
+                    "jdEvidence": jd_evidence,
+                    "cvEvidence": cv_evidence,
+                    "matchType": "exact",
+                    "score": 0.94,
+                    "reason": f"CV co bang chung truc tiep cho nhom nang luc {requirement_label}.",
+                }
+            )
+        elif transfer_term and cv_evidence:
+            matched.append(requirement_label)
+            transfer_matches.append(f"{requirement_label} -> {transfer_term}")
+            earned_weight += weight * 0.75
+            evidence_matches.append(
+                {
+                    "section": section,
+                    "requirement": requirement_label,
+                    "jdEvidence": jd_evidence,
+                    "cvEvidence": cv_evidence,
+                    "matchType": "transfer",
+                    "score": 0.78,
+                    "reason": f"CV co nang luc tuong duong cho nhom {requirement_label}, nhung cach dien dat khong trung hoan toan voi JD.",
+                }
+            )
+        else:
+            unmatched.append(requirement_label)
+            evidence_matches.append(
+                {
+                    "section": section,
+                    "requirement": requirement_label,
+                    "jdEvidence": jd_evidence,
+                    "cvEvidence": f"Khong tim thay bang chung ro rang cho {requirement_label} trong CV da trich xuat.",
+                    "matchType": "incorrect",
+                    "score": 0.0,
+                    "reason": f"Nhom nang luc {requirement_label} chua co bang chung du ro trong CV.",
+                }
+            )
+
+    if total_weight <= 0:
+        return _score_generic_skill_match(jd_skills, candidate_skills)
+
+    role_weighted_score = round((earned_weight / total_weight) * JD_FIT_MAX_SCORE, 1)
+    match_rate = round((earned_weight / total_weight) * 100)
+    return {
+        "matchedSkills": list(dict.fromkeys(matched)),
+        "unmatchedSkills": list(dict.fromkeys(unmatched)),
+        "transferMatches": list(dict.fromkeys(transfer_matches)),
+        "familyClusters": list(dict.fromkeys(family_clusters)),
+        "matchRate": match_rate,
+        "matchedRequirements": list(dict.fromkeys(matched)),
+        "missingRequirements": list(dict.fromkeys(unmatched)),
+        "evidenceMatches": evidence_matches,
+        "roleWeightedScore": role_weighted_score,
+        "uiSections": list(role_profile.get("uiSections") or ["General fit"]),
     }
 
 
@@ -826,6 +1039,144 @@ def _upsert_jd_fit_detail(
         analysis["TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"] = analysis["Tổng điểm"]
 
 
+def _upsert_jd_fit_detail(
+    details: List[Dict[str, Any]],
+    *,
+    analysis: Dict[str, Any],
+    candidate: Dict[str, Any],
+    jd_text: str,
+    cv_text: str,
+    hard_filters: Dict[str, Any],
+    semantic_match: Dict[str, Any] | None,
+) -> None:
+    detail_index = _find_detail_index(details, JD_FIT_CRITERION_ALIASES)
+    previous_score = 0.0
+    if detail_index is not None:
+        score_text = _get_record_value(details[detail_index], ["Äiá»ƒm", "Diem", "Score"])
+        previous_score = _parse_detail_score(score_text)[0] or 0.0
+
+    role_profile = resolve_role_profile(
+        jd_text=jd_text,
+        job_position=str(hard_filters.get("jobTitle") or hard_filters.get("position") or ""),
+        hard_filters=hard_filters,
+        industry_hint=str(candidate.get("industry") or hard_filters.get("industry") or ""),
+        candidate_job_title=str(candidate.get("jobTitle") or ""),
+    )
+    jd_skills = _extract_skills_from_jd(jd_text, role_profile)
+    candidate_skills = _extract_skills_from_candidate(candidate, cv_text, role_profile)
+    skill_match = _score_skill_match(
+        jd_skills,
+        candidate_skills,
+        role_profile=role_profile,
+        jd_text=jd_text,
+        cv_text=cv_text,
+        candidate=candidate,
+    ) if jd_skills else {
+        "matchedSkills": [],
+        "unmatchedSkills": [],
+        "transferMatches": [],
+        "familyClusters": [],
+        "matchRate": 0,
+        "matchedRequirements": [],
+        "missingRequirements": [],
+        "evidenceMatches": [],
+        "roleWeightedScore": 0.0,
+        "uiSections": list(role_profile.get("uiSections") or ["General fit"]),
+    }
+
+    vector_score = float(semantic_match.get("weightedScore") or 0.0) if semantic_match else 0.0
+    role_score = float(skill_match.get("roleWeightedScore") or 0.0)
+    if role_profile and not is_generic_role(role_profile):
+        blended_score = role_score if not semantic_match else round((role_score * 0.65) + (vector_score * 0.35), 1)
+        final_score = min(JD_FIT_MAX_SCORE, max(previous_score, blended_score))
+    else:
+        final_score = min(JD_FIT_MAX_SCORE, max(previous_score, vector_score))
+
+    evidence_parts: List[str] = []
+    if role_profile and not is_generic_role(role_profile):
+        evidence_parts.append(f"Vi tri muc tieu: {role_profile['label']}")
+    if skill_match["matchedSkills"]:
+        evidence_parts.append(f"Ká»¹ nÄƒng khá»›p: {', '.join(skill_match['matchedSkills'][:6])}")
+    if skill_match["transferMatches"]:
+        evidence_parts.append(f"Khá»›p chuyá»ƒn Ä‘á»•i: {'; '.join(skill_match['transferMatches'][:3])}")
+    if skill_match["unmatchedSkills"]:
+        evidence_parts.append(f"CÃ²n thiáº¿u: {', '.join(skill_match['unmatchedSkills'][:4])}")
+    if semantic_match:
+        evidence_parts.append(
+            f"Embedding JD/CV {semantic_match['similarity'] * 100:.1f}% ({semantic_match['queryModel']})"
+        )
+    evidence = " | ".join(evidence_parts) or "ChÆ°a cÃ³ Ä‘á»§ dá»¯ liá»‡u Ä‘á»ƒ suy ra pháº§n so khá»›p JD/CV."
+
+    if semantic_match and role_profile and not is_generic_role(role_profile):
+        explanation = (
+            f"So khop Job Fit uu tien nang luc chuyen mon cua {role_profile['label']}, "
+            f"sau do doi chieu voi do tuong dong embedding JD/CV."
+        )
+        formula = (
+            f"max(AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}, "
+            f"Role fit {_format_score_value(role_score)}/{_format_score_value(JD_FIT_MAX_SCORE)} * 65% + "
+            f"Vector semantic {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)} * 35%)"
+        )
+    elif semantic_match:
+        explanation = (
+            f"So khá»›p JD/CV láº¥y má»©c cao hÆ¡n giá»¯a Ä‘iá»ƒm AI gá»‘c "
+            f"{_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)} vÃ  "
+            f"Ä‘iá»ƒm semantic embedding {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}."
+        )
+        formula = (
+            f"max(AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}, "
+            f"Vector semantic {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)})"
+        )
+    elif role_profile and not is_generic_role(role_profile):
+        explanation = f"Khong tao duoc semantic embedding on dinh, nen Job Fit duoc suy ra tu bang chung chuyen mon cua {role_profile['label']}."
+        formula = f"max(AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}, Role fit {_format_score_value(role_score)}/{_format_score_value(JD_FIT_MAX_SCORE)})"
+    else:
+        explanation = "Giá»¯ láº¡i Ä‘iá»ƒm Job Fit hiá»‡n cÃ³ vÃ¬ chÆ°a táº¡o Ä‘Æ°á»£c semantic embedding á»•n Ä‘á»‹nh cho JD/CV."
+        formula = f"AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}"
+
+    candidate["jdCvMatchInsights"] = {
+        "similarity": float(semantic_match.get("similarity") or 0.0) if semantic_match else 0.0,
+        "weightedScore": final_score,
+        "semanticWeightedScore": vector_score,
+        "maxScore": JD_FIT_MAX_SCORE,
+        "queryModel": semantic_match.get("queryModel") if semantic_match else None,
+        "roleKey": role_profile.get("roleKey") or "generic",
+        "roleLabel": role_profile.get("label") or "General Specialist",
+        "matchedSkills": skill_match["matchedSkills"],
+        "missingSkills": skill_match["unmatchedSkills"],
+        "transferMatches": skill_match["transferMatches"],
+        "matchedRequirements": skill_match.get("matchedRequirements") or skill_match["matchedSkills"],
+        "missingRequirements": skill_match.get("missingRequirements") or skill_match["unmatchedSkills"],
+        "evidenceMatches": skill_match.get("evidenceMatches") or [],
+        "uiSections": skill_match.get("uiSections") or list(role_profile.get("uiSections") or ["General fit"]),
+    }
+
+    detail_payload = _detail_item(
+        JD_FIT_CRITERION_LABEL,
+        f"{_format_score_value(final_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}",
+        formula,
+        evidence,
+        explanation,
+    )
+    if detail_index is None:
+        details.insert(0, detail_payload)
+    else:
+        details[detail_index] = detail_payload
+
+    current_total = (
+        _parse_numeric_value(analysis.get("Tá»•ng Ä‘iá»ƒm"))
+        or _parse_numeric_value(analysis.get("Tong diem"))
+        or _parse_numeric_value(analysis.get("TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"))
+        or _parse_numeric_value(analysis.get("TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“iÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m"))
+    )
+    if current_total is not None:
+        updated_total = max(0.0, min(100.0, current_total + (final_score - previous_score)))
+        analysis["Tá»•ng Ä‘iá»ƒm"] = round(updated_total, 1)
+        analysis["Tong diem"] = round(updated_total, 1)
+        analysis["TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
+        analysis["TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“iÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
+
+
 def enrich_candidates(
     candidates: List[Dict[str, Any]],
     cv_text_map: Dict[str, str],
@@ -867,6 +1218,8 @@ def enrich_candidates(
             analysis=analysis,
             candidate=candidate,
             jd_text=jd_text,
+            cv_text=cv_text,
+            hard_filters=hard_filters,
             semantic_match=semantic_match,
         )
 

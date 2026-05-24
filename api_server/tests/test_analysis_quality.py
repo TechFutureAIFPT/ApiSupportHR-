@@ -110,6 +110,7 @@ def _install_dependency_stubs() -> None:
 _install_dependency_stubs()
 cv_analysis_service = importlib.import_module("app.services.cv_analysis_service")
 candidate_enrichment_service = importlib.import_module("app.services.candidate_enrichment_service")
+role_profile_service = importlib.import_module("app.services.role_profile_service")
 
 
 class AnalysisQualityTests(unittest.TestCase):
@@ -120,6 +121,28 @@ class AnalysisQualityTests(unittest.TestCase):
     def tearDown(self) -> None:
         candidate_enrichment_service.embed_text = self.original_embed_text
         candidate_enrichment_service.search_similar_records = self.original_search
+
+    def test_resolve_role_profile_prefers_explicit_job_position(self) -> None:
+        profile = role_profile_service.resolve_role_profile(
+            jd_text="Xay dung REST API, toi uu database va deploy Docker len AWS.",
+            job_position="Backend Developer",
+            hard_filters={"industry": "IT"},
+        )
+
+        self.assertEqual(profile["roleKey"], "backend_developer")
+        self.assertIn("Database/API", profile["uiSections"])
+
+    def test_create_analysis_prompt_includes_role_profile_summary(self) -> None:
+        prompt = cv_analysis_service._create_analysis_prompt(
+            "Backend Developer can Python FastAPI, PostgreSQL, Docker va REST API.",
+            {"jobFit": {"name": "Phu hop JD", "weight": 30}},
+            {"industry": "IT", "jobTitle": "Backend Developer"},
+            context_notes="Khong co.",
+        )
+
+        self.assertIn("HỒ SƠ VỊ TRÍ MỤC TIÊU", prompt)
+        self.assertIn("Backend Developer", prompt)
+        self.assertIn("REST API / GraphQL", prompt)
 
     def test_attach_advanced_score_breakdown_repairs_generic_reasoning(self) -> None:
         candidate = {
@@ -348,6 +371,74 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertTrue(candidate["pipelineMetadata"]["aiFallback"])
         self.assertGreater(candidate["analysis"]["Tong diem"], 0)
         self.assertGreaterEqual(len(candidate["analysis"]["Chi tiet"]), 5)
+
+    def test_enrich_candidates_builds_role_specific_jd_cv_insights(self) -> None:
+        candidate_enrichment_service.embed_text = lambda text, model=None: [1.0, 0.0]
+        candidate_enrichment_service.search_similar_records = (
+            lambda industry, cv_text, top_k=3, min_similarity=0.0, owner_uid=None, exclude_file_names=None, query_vector=None: None
+        )
+
+        enriched = candidate_enrichment_service.enrich_candidates(
+            candidates=[
+                {
+                    "fileName": "candidate-role-fit.pdf",
+                    "jobTitle": "Backend Developer",
+                    "industry": "IT",
+                    "department": "Engineering",
+                    "analysis": {
+                        "Tong diem": 40.0,
+                        "Chi tiet": [],
+                    },
+                }
+            ],
+            cv_text_map={
+                "candidate-role-fit.pdf": (
+                    "Backend engineer with Python FastAPI, REST API, PostgreSQL, Docker and JWT authentication. "
+                    "Built internal services and deployed to AWS."
+                ),
+            },
+            jd_text="Backend Developer can Python FastAPI, REST API, PostgreSQL, Docker, AWS va JWT.",
+            hard_filters={"industry": "IT", "jobTitle": "Backend Developer"},
+            owner_uid="user-123",
+        )
+
+        candidate = enriched[0]
+        insight = candidate["jdCvMatchInsights"]
+        self.assertEqual(insight["roleKey"], "backend_developer")
+        self.assertIn("Backend language/framework", insight["matchedRequirements"])
+        self.assertIn("Database/API", [item["section"] for item in insight["evidenceMatches"]])
+        self.assertNotIn("Responsive / Accessibility", [item["requirement"] for item in insight["evidenceMatches"]])
+
+    def test_enrich_candidates_falls_back_to_generic_for_unknown_role(self) -> None:
+        candidate_enrichment_service.embed_text = lambda text, model=None: [1.0, 0.0]
+        candidate_enrichment_service.search_similar_records = (
+            lambda industry, cv_text, top_k=3, min_similarity=0.0, owner_uid=None, exclude_file_names=None, query_vector=None: None
+        )
+
+        enriched = candidate_enrichment_service.enrich_candidates(
+            candidates=[
+                {
+                    "fileName": "candidate-generic.pdf",
+                    "jobTitle": "Operations Specialist",
+                    "industry": "Operations",
+                    "department": "Operations",
+                    "analysis": {
+                        "Tong diem": 35.0,
+                        "Chi tiet": [],
+                    },
+                }
+            ],
+            cv_text_map={
+                "candidate-generic.pdf": "Operations specialist with reporting, coordination and vendor management experience.",
+            },
+            jd_text="Operations specialist can quan ly quy trinh, lam viec voi vendor va bao cao.",
+            hard_filters={"industry": "Operations", "jobTitle": "Operations Specialist"},
+            owner_uid="user-123",
+        )
+
+        candidate = enriched[0]
+        self.assertEqual(candidate["jdCvMatchInsights"]["roleKey"], "generic")
+        self.assertIsInstance(candidate["jdCvMatchInsights"]["evidenceMatches"], list)
 
 
 if __name__ == "__main__":

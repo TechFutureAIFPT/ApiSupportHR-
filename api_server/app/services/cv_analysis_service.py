@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.prompts import render_prompt
 from app.schemas.analysis import StructuredCandidateOutputList
 from app.services.gemini_service import generate_content
+from app.services.role_profile_service import build_role_profile_summary, resolve_role_profile
 
 
 MISSING_DETAIL_EVIDENCE = "AI chua tra ve dan chung cu the cho tieu chi nay."
@@ -1558,6 +1559,12 @@ def _create_analysis_prompt(
 ) -> str:
     compact_jd = " ".join(jd_text.split())[:5000]
     compact_weights = _build_compact_criteria(weights)
+    role_profile = resolve_role_profile(
+        jd_text=jd_text,
+        job_position=str(hard_filters.get("jobTitle") or hard_filters.get("position") or ""),
+        hard_filters=hard_filters,
+        industry_hint=str(hard_filters.get("industry") or ""),
+    )
 
     return render_prompt(
         "cv_analysis/analyze_entries",
@@ -1567,6 +1574,7 @@ def _create_analysis_prompt(
             "location": hard_filters.get("location") or "Linh hoat",
             "min_exp": hard_filters.get("minExp") or "Khong yeu cau",
             "seniority": hard_filters.get("seniority") or "Linh hoat",
+            "role_profile_summary": build_role_profile_summary(role_profile),
             "context_notes": context_notes or "Khong co boi canh bo sung.",
         },
     )
