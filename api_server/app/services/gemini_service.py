@@ -59,7 +59,13 @@ def _is_invalid_key_error(error: Exception) -> bool:
     )
 
 
-def _get_keys() -> List[str]:
+def _get_keys(api_keys: Iterable[str] | None = None) -> List[str]:
+    if api_keys is not None:
+        keys = [value.strip() for value in api_keys if isinstance(value, str) and value.strip()]
+        if not keys:
+            raise HTTPException(status_code=500, detail="Gemini API key not configured on server")
+        return keys
+
     settings = get_settings()
     keys = settings.gemini_api_keys
     if not keys:
@@ -84,8 +90,13 @@ def _fallback_embedding_models(model: str) -> Iterable[str]:
         yield "gemini-embedding-001"
 
 
-def generate_content(model: str, contents: Any, config: Any = None) -> str:
-    keys = _get_keys()
+def generate_content(
+    model: str,
+    contents: Any,
+    config: Any = None,
+    api_keys: Iterable[str] | None = None,
+) -> str:
+    keys = _get_keys(api_keys)
     last_error: Exception | None = None
     normalized_config = _normalize_config(config) if config is not None else None
 

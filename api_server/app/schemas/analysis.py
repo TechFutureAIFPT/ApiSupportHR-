@@ -178,3 +178,36 @@ class CandidateEnrichmentRequest(BaseModel):
 
 class CandidateEnrichmentResponse(BaseModel):
     candidates: List[Dict[str, Any]]
+
+
+class QuickCvTextEntry(BaseModel):
+    file_name: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+
+
+class QuickCvScoreRequest(BaseModel):
+    cv_entries: List[QuickCvTextEntry] = Field(min_length=1, max_length=3)
+    jd_text: str | None = None
+    include_extracted_text: bool = False
+
+
+class QuickCvScoreItem(BaseModel):
+    file_name: str
+    candidate_name: str = ""
+    target_role: str = ""
+    score: int = Field(default=0, ge=0, le=100)
+    rank: Literal["A", "B", "C"] = "C"
+    summary: str = ""
+    strengths: List[str] = Field(default_factory=list)
+    weaknesses: List[str] = Field(default_factory=list)
+    improvements: List[str] = Field(default_factory=list)
+    matched_keywords: List[str] = Field(default_factory=list)
+    missing_keywords: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    extracted_text: str | None = None
+
+
+class QuickCvScoreResponse(BaseModel):
+    items: List[QuickCvScoreItem]
+    model: str
+    usage_note: str = "AI output is a screening aid and should be reviewed by a recruiter."

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import asyncio
+import json
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.api.deps import get_current_user, get_optional_current_user
 from app.schemas.analysis import (
@@ -15,6 +18,8 @@ from app.schemas.analysis import (
     CvIndustryClassifierStatusResponse,
     CvProfileRefineRequest,
     CvProfileRefineResponse,
+    QuickCvScoreRequest,
+    QuickCvScoreResponse,
 )
 from app.schemas.gemini import (
     GeminiEmbedRequest,
@@ -37,17 +42,43 @@ from app.services.analysis_job_service import get_analysis_job, start_analysis_j
 from app.services.candidate_enrichment_service import enrich_candidates
 from app.services.candidate_refinement_service import refine_cv_profile
 from app.services.cv_pipeline_service import run_smart_cv_analysis
+from app.services.file_extraction_service import extract_text_from_upload
 from app.services.gemini_service import embed_text, generate_content
 from app.services.local_classifier_service import classify_cv_text, get_classifier_status
+from app.services.quick_cv_score_service import MAX_CV_COUNT, score_quick_cvs
 from app.services.workflow_service import (
     extract_hard_filters,
     extract_job_position,
     generate_interview_questions,
     structure_jd,
 )
+from app.core.config import get_settings
 
 
 router = APIRouter(prefix="/api", tags=["ai"])
+
+
+def _parse_quick_cv_texts(raw_value: str | None) -> list[dict[str, str]]:
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=400, detail="cv_texts_json must be valid JSON") from error
+
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail="cv_texts_json must be an array")
+
+    entries: list[dict[str, str]] = []
+    for index, item in enumerate(parsed, start=1):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        file_name = str(item.get("file_name") or item.get("fileName") or f"cv-{index}.txt")
+        entries.append({"file_name": file_name, "text": text})
+    return entries
 
 
 @router.post("/gemini-chat", response_model=GeminiGenerateResponse)
@@ -104,6 +135,66 @@ async def cv_analyze_core(
         candidates=result.get("candidates") or [],
         pipeline=result.get("pipeline") or {},
     )
+
+
+@router.post("/cv/quick-score-text", response_model=QuickCvScoreResponse)
+def cv_quick_score_text(payload: QuickCvScoreRequest) -> QuickCvScoreResponse:
+    settings = get_settings()
+    try:
+        items = score_quick_cvs(
+            [entry.model_dump() for entry in payload.cv_entries],
+            jd_text=payload.jd_text,
+            include_extracted_text=payload.include_extracted_text,
+            api_keys=settings.quick_cv_gemini_api_keys,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return QuickCvScoreResponse(items=items, model=settings.quick_cv_gemini_model)
+
+
+@router.post("/cv/quick-score", response_model=QuickCvScoreResponse)
+async def cv_quick_score(
+    files: list[UploadFile] | None = File(default=None),
+    cv_texts_json: str | None = Form(default=None),
+    jd_text: str | None = Form(default=None),
+    include_extracted_text: bool = Form(default=False),
+    force_ocr: bool = Form(default=False),
+) -> QuickCvScoreResponse:
+    settings = get_settings()
+    entries = _parse_quick_cv_texts(cv_texts_json)
+    uploaded_files = files or []
+
+    if len(entries) + len(uploaded_files) < 1:
+        raise HTTPException(status_code=400, detail="Upload at least one CV file or provide cv_texts_json")
+    if len(entries) + len(uploaded_files) > MAX_CV_COUNT:
+        raise HTTPException(status_code=400, detail=f"Quick CV scoring supports at most {MAX_CV_COUNT} CVs")
+
+    for file in uploaded_files:
+        try:
+            file_bytes = await file.read()
+            text = await asyncio.to_thread(
+                extract_text_from_upload,
+                file_bytes=file_bytes,
+                filename=file.filename or "uploaded-cv",
+                content_type=file.content_type or "",
+                force_ocr=force_ocr,
+                document_type="cv",
+                api_keys=settings.quick_cv_gemini_api_keys,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        entries.append({"file_name": file.filename or "uploaded-cv", "text": text})
+
+    try:
+        items = score_quick_cvs(
+            entries,
+            jd_text=jd_text,
+            include_extracted_text=include_extracted_text,
+            api_keys=settings.quick_cv_gemini_api_keys,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return QuickCvScoreResponse(items=items, model=settings.quick_cv_gemini_model)
 
 
 @router.post(

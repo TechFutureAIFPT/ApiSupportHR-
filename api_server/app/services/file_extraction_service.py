@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from io import BytesIO
-from typing import Literal
+from typing import Iterable, Literal
 
 import fitz
 from docx import Document
@@ -58,7 +58,11 @@ def _build_vision_prompt(document_type: Literal["cv", "jd"]) -> str:
     )
 
 
-def _ocr_image_bytes(image_bytes: bytes, document_type: Literal["cv", "jd"]) -> str:
+def _ocr_image_bytes(
+    image_bytes: bytes,
+    document_type: Literal["cv", "jd"],
+    api_keys: Iterable[str] | None = None,
+) -> str:
     settings = get_settings()
     response = generate_content(
         GEMINI_VISION_MODEL or settings.gemini_default_model,
@@ -83,11 +87,17 @@ def _ocr_image_bytes(image_bytes: bytes, document_type: Literal["cv", "jd"]) -> 
             "maxOutputTokens": 8192,
             "responseMimeType": "text/plain",
         },
+        api_keys=api_keys,
     )
     return response.strip()
 
 
-def _extract_text_from_pdf(file_bytes: bytes, force_ocr: bool, document_type: Literal["cv", "jd"]) -> str:
+def _extract_text_from_pdf(
+    file_bytes: bytes,
+    force_ocr: bool,
+    document_type: Literal["cv", "jd"],
+    api_keys: Iterable[str] | None = None,
+) -> str:
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     try:
         text_layer = "\n".join(page.get_text("text") for page in doc)
@@ -99,7 +109,7 @@ def _extract_text_from_pdf(file_bytes: bytes, force_ocr: bool, document_type: Li
         for index in range(pages):
             page = doc.load_page(index)
             pix = page.get_pixmap(matrix=fitz.Matrix(PDF_RENDER_SCALE, PDF_RENDER_SCALE), alpha=False)
-            ocr_text = _ocr_image_bytes(pix.tobytes("png"), document_type)
+            ocr_text = _ocr_image_bytes(pix.tobytes("png"), document_type, api_keys=api_keys)
             if ocr_text:
                 ocr_parts.append(ocr_text)
 
@@ -142,6 +152,7 @@ def extract_text_from_upload(
     content_type: str,
     force_ocr: bool = False,
     document_type: str | None = None,
+    api_keys: Iterable[str] | None = None,
 ) -> str:
     if len(file_bytes) > FILE_SIZE_LIMIT_MB * 1024 * 1024:
         raise ValueError(f"File is too large. Maximum size is {FILE_SIZE_LIMIT_MB}MB.")
@@ -150,14 +161,14 @@ def extract_text_from_upload(
     doc_type: Literal["cv", "jd"] = "jd" if document_type == "jd" else "cv"
 
     if content_type == "application/pdf" or name_lower.endswith(".pdf"):
-        raw_text = _extract_text_from_pdf(file_bytes, force_ocr, doc_type)
+        raw_text = _extract_text_from_pdf(file_bytes, force_ocr, doc_type, api_keys=api_keys)
     elif (
         content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         or name_lower.endswith(".docx")
     ):
         raw_text = _extract_text_from_docx(file_bytes)
     elif content_type.startswith("image/"):
-        raw_text = _ocr_image_bytes(file_bytes, doc_type)
+        raw_text = _ocr_image_bytes(file_bytes, doc_type, api_keys=api_keys)
     elif content_type in {"text/plain", "text/csv", "application/csv"} or name_lower.endswith((".txt", ".csv")):
         raw_text = _decode_plain_text(file_bytes)
     else:
