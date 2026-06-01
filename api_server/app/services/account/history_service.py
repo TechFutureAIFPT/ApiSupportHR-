@@ -5,7 +5,7 @@ from typing import Any
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
-from app.services.account.shared import serialize, sorted_docs
+from app.services.account.shared import serialize, sorted_docs, to_millis
 
 
 MAX_HISTORY_ENTRIES_PER_USER = 100
@@ -146,15 +146,23 @@ def save_history_session(user: AuthenticatedUser, payload: dict[str, Any]) -> st
 
 def fetch_recent_history(user: AuthenticatedUser, limit_count: int = 20, user_email: str | None = None) -> list[dict[str, Any]]:
     docs = list(repo.cv_history().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "timestamp")
+    synced_docs = list(repo.synced_history().where("uid", "==", user.uid).stream())
+    ordered = [
+        ("cv", doc)
+        for doc in sorted_docs(docs, "timestamp")
+    ] + [
+        ("sync", doc)
+        for doc in sorted_docs(synced_docs, "timestamp")
+    ]
+    ordered.sort(key=lambda item: to_millis((item[1].to_dict() or {}).get("timestamp")), reverse=True)
     items = []
-    for doc in ordered:
+    for source, doc in ordered:
         data = doc.to_dict() or {}
-        if "fullPayload" not in data and "jobPosition" not in data:
+        if "fullPayload" not in data and "jobPosition" not in data and "analysisData" not in data:
             continue
         if user_email and data.get("userEmail") not in {user_email, user.email} and data.get("email") not in {user_email, user.email}:
             continue
-        items.append({"id": doc.id, **serialize(data)})
+        items.append({"id": doc.id, "source": source, **serialize(data)})
         if len(items) >= limit_count:
             break
     return items
