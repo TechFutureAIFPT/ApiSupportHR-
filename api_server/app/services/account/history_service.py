@@ -9,6 +9,8 @@ from app.services.account.shared import serialize, sorted_docs, to_millis
 
 
 MAX_HISTORY_ENTRIES_PER_USER = 100
+MOBILE_JD_SNIPPET_LENGTH = 800
+MOBILE_TEXT_FIELD_LENGTH = 420
 
 
 def cleanup_synced_history(user: AuthenticatedUser, keep_count: int = MAX_HISTORY_ENTRIES_PER_USER) -> None:
@@ -67,6 +69,230 @@ def get_sync_stats(user: AuthenticatedUser) -> dict[str, Any]:
         "historyEntries": len(history_docs),
         "feedbackEntries": len(feedback_docs),
         "lastSyncTime": last_sync_time,
+    }
+
+
+def _score_number(value: Any, fallback: float = 0) -> float:
+    if isinstance(value, (int, float)):
+      return float(value)
+    if isinstance(value, str):
+        digits = "".join(char for char in value if char.isdigit() or char == ".")
+        try:
+            return float(digits) if digits else fallback
+        except ValueError:
+            return fallback
+    return fallback
+
+
+def _first_text(record: dict[str, Any], keys: list[str], fallback: str = "") -> str:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float)):
+            return str(value)
+    return fallback
+
+
+def _text_list(record: dict[str, Any], keys: list[str], limit: int) -> list[str]:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, list):
+            return [str(item).strip()[:MOBILE_TEXT_FIELD_LENGTH] for item in value if str(item).strip()][:limit]
+    return []
+
+
+def _details(record: dict[str, Any], limit: int = 6) -> list[dict[str, Any]]:
+    raw = record.get("Chi tiết") or record.get("Chi tiet") or record.get("details") or []
+    if not isinstance(raw, list):
+        return []
+
+    compacted: list[dict[str, Any]] = []
+    for item in raw[:limit]:
+        if not isinstance(item, dict):
+            continue
+        compacted.append(
+            {
+                "Tiêu chí": _first_text(item, ["Tiêu chí", "TiÃªu chÃ­", "criterion", "name"]),
+                "Điểm": _first_text(item, ["Điểm", "Äiá»ƒm", "score"]),
+                "Dẫn chứng": _first_text(item, ["Dẫn chứng", "evidence", "Giải thích", "explanation"])[:MOBILE_TEXT_FIELD_LENGTH],
+            }
+        )
+    return compacted
+
+
+def _compact_raw_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    analysis = candidate.get("analysis") if isinstance(candidate.get("analysis"), dict) else {}
+    return {
+        "id": candidate.get("id"),
+        "candidateName": candidate.get("candidateName") or candidate.get("name"),
+        "fileName": candidate.get("fileName"),
+        "jobTitle": candidate.get("jobTitle"),
+        "industry": candidate.get("industry"),
+        "experienceLevel": candidate.get("experienceLevel"),
+        "detectedLocation": candidate.get("detectedLocation"),
+        "status": candidate.get("status"),
+        "analysis": {
+            "Tổng điểm": int(_score_number(analysis.get("Tổng điểm") or analysis.get("Tong diem") or analysis.get("score"))),
+            "Hạng": _first_text(analysis, ["Hạng", "Hang", "rank"], "C"),
+            "Điểm mạnh CV": _text_list(analysis, ["Điểm mạnh CV", "Diem manh CV", "strengths"], 5),
+            "Điểm yếu CV": _text_list(analysis, ["Điểm yếu CV", "Diem yeu CV", "weaknesses"], 5),
+            "Câu hỏi phỏng vấn": _text_list(analysis, ["Câu hỏi phỏng vấn", "Cau hoi phong van", "interview_questions"], 3),
+            "Chi tiết": _details(analysis, 6),
+        },
+    }
+
+
+def _extract_candidates(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    full_payload = entry.get("fullPayload") if isinstance(entry.get("fullPayload"), dict) else {}
+    analysis_data = entry.get("analysisData") if isinstance(entry.get("analysisData"), dict) else {}
+    candidates = full_payload.get("candidates") or entry.get("candidates") or analysis_data.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        return [candidate for candidate in candidates if isinstance(candidate, dict)]
+
+    top_candidates = entry.get("topCandidates")
+    if isinstance(top_candidates, list):
+        return [
+            {
+                "id": item.get("id"),
+                "candidateName": item.get("name"),
+                "jobTitle": entry.get("jobPosition"),
+                "status": "SUCCESS",
+                "analysis": {
+                    "Tổng điểm": item.get("score") or 0,
+                    "Hạng": item.get("grade") or "C",
+                    "Điểm mạnh CV": ["Có trong danh sách ứng viên nổi bật từ lịch sử web."],
+                    "Điểm yếu CV": [],
+                },
+            }
+            for item in top_candidates
+            if isinstance(item, dict)
+        ]
+    return []
+
+
+def _candidate_id(candidate: dict[str, Any], entry_id: str, index: int) -> str:
+    raw_id = str(candidate.get("id") or f"{entry_id}-{index}-{candidate.get('fileName') or 'candidate'}")
+    scoped = f"{entry_id or 'history'}-{index}-{raw_id}"
+    return "".join(char if char.isalnum() or char in "_-" else "-" for char in scoped).replace("--", "-")
+
+
+def _compact_candidate_view(candidate: dict[str, Any], entry: dict[str, Any], index: int) -> dict[str, Any] | None:
+    if candidate.get("status") and candidate.get("status") != "SUCCESS":
+        return None
+
+    entry_id = str(entry.get("id") or "")
+    full_payload = entry.get("fullPayload") if isinstance(entry.get("fullPayload"), dict) else {}
+    analysis = candidate.get("analysis") if isinstance(candidate.get("analysis"), dict) else {}
+    hard_filters = full_payload.get("hardFilters") if isinstance(full_payload.get("hardFilters"), dict) else {}
+    score = int(_score_number(analysis.get("Tổng điểm") or analysis.get("Tong diem") or analysis.get("score") or candidate.get("totalScore")))
+    rank = _first_text(analysis, ["Hạng", "Hang", "rank"], str(candidate.get("grade") or "C")).upper() or "C"
+    candidate_name = str(candidate.get("candidateName") or candidate.get("name") or "Ứng viên chưa xác định")
+    raw = _compact_raw_candidate(candidate)
+
+    return {
+        "id": _candidate_id(candidate, entry_id, index),
+        "sourceHistoryId": entry_id,
+        "syncHistoryId": str(entry.get("syncHistoryId") or ""),
+        "sessionId": str(entry.get("sessionId") or full_payload.get("sessionId") or ""),
+        "candidateName": candidate_name,
+        "fileName": str(candidate.get("fileName") or "Không rõ file"),
+        "jobTitle": str(candidate.get("jobTitle") or entry.get("jobPosition") or full_payload.get("jobPosition") or "Vị trí chưa rõ"),
+        "industry": str(candidate.get("industry") or "Chưa rõ ngành"),
+        "experienceLevel": str(candidate.get("experienceLevel") or "Chưa rõ level"),
+        "detectedLocation": str(candidate.get("detectedLocation") or entry.get("locationRequirement") or ""),
+        "score": score,
+        "rank": rank,
+        "strengths": _text_list(analysis, ["Điểm mạnh CV", "Diem manh CV", "strengths"], 5),
+        "weaknesses": _text_list(analysis, ["Điểm yếu CV", "Diem yeu CV", "weaknesses"], 5),
+        "interviewQuestions": _text_list(analysis, ["Câu hỏi phỏng vấn", "Cau hoi phong van", "interview_questions"], 3),
+        "details": _details(analysis, 6),
+        "warnings": [
+            str(item)[:MOBILE_TEXT_FIELD_LENGTH]
+            for item in list(candidate.get("softFilterWarnings") or [])
+            if str(item).strip()
+        ],
+        "hardFilterFailureReason": candidate.get("hardFilterFailureReason"),
+        "hardFilters": hard_filters,
+        "jdText": str(full_payload.get("jdText") or entry.get("jdTextSnippet") or "")[:MOBILE_JD_SNIPPET_LENGTH],
+        "jobPosition": str(full_payload.get("jobPosition") or entry.get("jobPosition") or candidate.get("jobTitle") or ""),
+        "raw": raw,
+    }
+
+
+def _compact_history_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    full_payload = entry.get("fullPayload") if isinstance(entry.get("fullPayload"), dict) else {}
+    compact_candidates = [_compact_raw_candidate(candidate) for candidate in _extract_candidates(entry)[:6]]
+    return {
+        "id": str(entry.get("id") or ""),
+        "timestamp": to_millis(entry.get("timestamp")) or int(_score_number(entry.get("timestamp"))),
+        "jobPosition": str(entry.get("jobPosition") or full_payload.get("jobPosition") or ""),
+        "locationRequirement": str(entry.get("locationRequirement") or ""),
+        "totalCandidates": int(_score_number(entry.get("totalCandidates"), len(compact_candidates))),
+        "userEmail": str(entry.get("userEmail") or entry.get("email") or ""),
+        "fullPayload": {
+            "jdText": str(full_payload.get("jdText") or entry.get("jdTextSnippet") or "")[:MOBILE_JD_SNIPPET_LENGTH],
+            "jobPosition": str(full_payload.get("jobPosition") or entry.get("jobPosition") or ""),
+            "hardFilters": full_payload.get("hardFilters") if isinstance(full_payload.get("hardFilters"), dict) else {},
+            "candidates": compact_candidates,
+        },
+        "topCandidates": entry.get("topCandidates") if isinstance(entry.get("topCandidates"), list) else [],
+    }
+
+
+def _optimized_history_docs(collection_ref: Any, user: AuthenticatedUser, limit_count: int):
+    try:
+        return list(
+            collection_ref.where("uid", "==", user.uid)
+            .order_by("timestamp", direction="DESCENDING")
+            .limit(limit_count)
+            .stream()
+        )
+    except Exception:
+        return sorted_docs(list(collection_ref.where("uid", "==", user.uid).stream()), "timestamp")[:limit_count]
+
+
+def fetch_mobile_inbox(
+    user: AuthenticatedUser,
+    history_limit: int = 12,
+    candidate_limit: int = 60,
+    user_email: str | None = None,
+) -> dict[str, Any]:
+    cv_docs = _optimized_history_docs(repo.cv_history(), user, history_limit)
+    sync_docs = _optimized_history_docs(repo.synced_history(), user, history_limit)
+    entries: list[dict[str, Any]] = []
+
+    for source, docs in (("cv", cv_docs), ("sync", sync_docs)):
+        for doc in docs:
+            data = doc.to_dict() or {}
+            if user_email and data.get("userEmail") not in {user_email, user.email} and data.get("email") not in {user_email, user.email}:
+                continue
+            entries.append({"id": doc.id, "source": source, **serialize(data)})
+
+    entries.sort(key=lambda item: to_millis(item.get("timestamp")), reverse=True)
+    entries = entries[:history_limit]
+
+    history = [_compact_history_entry(entry) for entry in entries]
+    candidates = [
+        candidate
+        for entry in entries
+        for index, raw_candidate in enumerate(_extract_candidates(entry))
+        for candidate in [_compact_candidate_view(raw_candidate, entry, index)]
+        if candidate is not None
+    ]
+    candidates.sort(key=lambda item: item.get("score") or 0, reverse=True)
+    candidates = candidates[:candidate_limit]
+
+    return {
+        "candidates": candidates,
+        "history": history,
+        "stats": {
+            "candidateCount": len(candidates),
+            "historyCount": len(history),
+            "latestTimestamp": history[0]["timestamp"] if history else None,
+        },
+        "revision": f"mobile-inbox-v1:{history[0]['timestamp'] if history else 0}:{len(candidates)}",
+        "generatedAt": int(datetime.now(timezone.utc).timestamp() * 1000),
     }
 
 

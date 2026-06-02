@@ -37,6 +37,10 @@ class Settings:
             os.getenv("QUICK_CV_GEMINI_MODEL", self.gemini_cv_analysis_model).strip()
             or self.gemini_cv_analysis_model
         )
+        self.mobile_jd_gemini_model = (
+            os.getenv("MOBILE_JD_GEMINI_MODEL", self.gemini_default_model).strip()
+            or self.gemini_default_model
+        )
         raw_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "").strip()
         if raw_embedding_model in {"", "text-embedding-004", "models/text-embedding-004"}:
             # Migrate legacy/default values to the current supported Gemini embedding model.
@@ -121,6 +125,21 @@ class Settings:
             os.getenv("QUICK_CV_GEMINI_API_KEY"),
             os.getenv("QUICK_CV_GEMINI_API_KEY_1"),
             os.getenv("QUICK_CV_GEMINI_API_KEY_2"),
+        ]
+        keys = [value.strip() for value in raw if isinstance(value, str) and value.strip()]
+        seen: set[str] = set()
+        unique: List[str] = []
+        for key in [*keys, *self.gemini_api_keys]:
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(key)
+        return unique
+
+    @property
+    def mobile_jd_gemini_api_keys(self) -> List[str]:
+        raw = [
+            os.getenv("MOBILE_JD_GEMINI_API_KEY"),
         ]
         keys = [value.strip() for value in raw if isinstance(value, str) and value.strip()]
         seen: set[str] = set()

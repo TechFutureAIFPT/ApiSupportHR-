@@ -12,6 +12,7 @@ ACTIVE_PROMPT_VERSIONS: dict[str, str] = {
     "candidate_refinement/refine_name": "v1",
     "cv_analysis/analyze_entries": "v4",
     "file_extraction/ocr_document": "v1",
+    "mobile_jd/standardize": "v1",
     "workflow/extract_hard_filters": "v1",
     "workflow/extract_job_position": "v1",
     "workflow/interview_comparative": "v1",

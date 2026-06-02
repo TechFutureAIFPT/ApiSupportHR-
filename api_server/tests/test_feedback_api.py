@@ -8,7 +8,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user
-from app.main import app
+from app.main import api_app
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 
@@ -74,14 +74,14 @@ class FakeCollection:
 
 class FeedbackApiTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.client = TestClient(app)
+        self.client = TestClient(api_app)
         self.fake_feedback = FakeCollection()
         self.original_analysis_feedback = repo.analysis_feedback
         self.original_server_timestamp = repo.server_timestamp
 
         repo.analysis_feedback = lambda: self.fake_feedback  # type: ignore[assignment]
         repo.server_timestamp = lambda: datetime.now(timezone.utc)  # type: ignore[assignment]
-        app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        api_app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
             uid="user-123",
             email="hr@example.com",
             display_name="HR Tester",
@@ -91,7 +91,7 @@ class FeedbackApiTests(unittest.TestCase):
     def tearDown(self) -> None:
         repo.analysis_feedback = self.original_analysis_feedback  # type: ignore[assignment]
         repo.server_timestamp = self.original_server_timestamp  # type: ignore[assignment]
-        app.dependency_overrides.clear()
+        api_app.dependency_overrides.clear()
         self.client.close()
 
     def test_feedback_crud_and_stats(self) -> None:

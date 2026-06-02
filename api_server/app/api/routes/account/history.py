@@ -30,6 +30,21 @@ def fetch_recent_history(
     return history_service.fetch_recent_history(current_user, limit_count=limit_count, user_email=user_email)
 
 
+@router.get("/mobile-inbox")
+def fetch_mobile_inbox(
+    history_limit: int = Query(default=12, ge=1, le=50),
+    candidate_limit: int = Query(default=60, ge=1, le=200),
+    user_email: str | None = None,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return history_service.fetch_mobile_inbox(
+        current_user,
+        history_limit=history_limit,
+        candidate_limit=candidate_limit,
+        user_email=user_email,
+    )
+
+
 @router.post("/history/manual-snapshot")
 def save_manual_history_snapshot(payload: HistorySaveRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
     return {"id": history_service.save_manual_history_snapshot(current_user, payload.model_dump())}
