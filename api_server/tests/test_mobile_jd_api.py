@@ -65,6 +65,7 @@ class MobileJDApiTests(unittest.TestCase):
                 json={
                     "jdText": "Marketing Executive\nMô tả công việc: lập kế hoạch nội dung.",
                     "targetPlatform": "topcv",
+                    "supplementalFields": {"companyName": "Hipo Tools"},
                 },
             )
 
@@ -76,6 +77,36 @@ class MobileJDApiTests(unittest.TestCase):
         self.assertEqual(payload["source"], "ai")
         self.assertEqual(generate.call_args.args[0], "gemini-test-jd")
         self.assertEqual(generate.call_args.kwargs["api_keys"][0], "jd-key")
+        self.assertIn("THÔNG TIN HR BỔ SUNG", generate.call_args.args[1])
+
+    def test_standardize_jd_text_appends_supplemental_fields(self) -> None:
+        ai_payload = {
+            "score": 90,
+            "missingSections": [],
+            "weakPoints": [],
+            "suggestions": [],
+            "normalizedJD": {"title": "Sales Executive", "responsibilities": [], "requirements": [], "benefits": []},
+        }
+
+        with patch("app.services.mobile_jd.standardizer_service.generate_content", return_value=json.dumps(ai_payload)) as generate:
+            response = self.client.post(
+                "/api/mobile/jd/standardize",
+                json={
+                    "jdText": "Sales Executive\nMô tả: tư vấn khách hàng.",
+                    "targetPlatform": "generic",
+                    "supplementalFields": {
+                        "companyName": "Hipo Tools",
+                        "salary": "15-20 triệu",
+                        "location": "Hà Nội",
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        prompt = generate.call_args.args[1]
+        self.assertIn("Tên công ty: Hipo Tools", prompt)
+        self.assertIn("Mức lương: 15-20 triệu", prompt)
+        self.assertIn("Địa điểm: Hà Nội", prompt)
 
     def test_standardize_jd_text_falls_back_when_ai_fails(self) -> None:
         with patch("app.services.mobile_jd.standardizer_service.generate_content", side_effect=RuntimeError("quota")):

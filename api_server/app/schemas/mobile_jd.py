@@ -8,11 +8,22 @@ from pydantic import BaseModel, ConfigDict, Field
 TargetPlatform = Literal["generic", "topcv", "vietnamworks", "linkedin", "parse_jd"]
 
 
+class JDSupplementalFields(BaseModel):
+    company_name: str = Field(default="", alias="companyName")
+    salary: str = ""
+    location: str = ""
+    working_time: str = Field(default="", alias="workingTime")
+    benefits: str = ""
+    application_info: str = Field(default="", alias="applicationInfo")
+    notes: str = ""
+
+
 class JDStandardizeRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     jd_text: str = Field(alias="jdText", min_length=1)
     target_platform: TargetPlatform = Field(default="generic", alias="targetPlatform")
+    supplemental_fields: JDSupplementalFields | None = Field(default=None, alias="supplementalFields")
 
 
 class JDPlatformInfo(BaseModel):

@@ -94,6 +94,23 @@ def _first_text(record: dict[str, Any], keys: list[str], fallback: str = "") -> 
     return fallback
 
 
+def _candidate_avatar_url(candidate: dict[str, Any]) -> str:
+    return _first_text(
+        candidate,
+        [
+            "avatarUrl",
+            "avatar",
+            "photoUrl",
+            "photoURL",
+            "imageUrl",
+            "imageURL",
+            "profileImageUrl",
+            "profilePhotoUrl",
+            "picture",
+        ],
+    )
+
+
 def _text_list(record: dict[str, Any], keys: list[str], limit: int) -> list[str]:
     for key in keys:
         value = record.get(key)
@@ -126,6 +143,7 @@ def _compact_raw_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": candidate.get("id"),
         "candidateName": candidate.get("candidateName") or candidate.get("name"),
+        "avatarUrl": _candidate_avatar_url(candidate),
         "fileName": candidate.get("fileName"),
         "jobTitle": candidate.get("jobTitle"),
         "industry": candidate.get("industry"),
@@ -156,6 +174,7 @@ def _extract_candidates(entry: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "id": item.get("id"),
                 "candidateName": item.get("name"),
+                "avatarUrl": _candidate_avatar_url(item),
                 "jobTitle": entry.get("jobPosition"),
                 "status": "SUCCESS",
                 "analysis": {
@@ -196,6 +215,7 @@ def _compact_candidate_view(candidate: dict[str, Any], entry: dict[str, Any], in
         "syncHistoryId": str(entry.get("syncHistoryId") or ""),
         "sessionId": str(entry.get("sessionId") or full_payload.get("sessionId") or ""),
         "candidateName": candidate_name,
+        "avatarUrl": _candidate_avatar_url(candidate),
         "fileName": str(candidate.get("fileName") or "Không rõ file"),
         "jobTitle": str(candidate.get("jobTitle") or entry.get("jobPosition") or full_payload.get("jobPosition") or "Vị trí chưa rõ"),
         "industry": str(candidate.get("industry") or "Chưa rõ ngành"),
@@ -332,6 +352,7 @@ def save_history_session(user: AuthenticatedUser, payload: dict[str, Any]) -> st
             {
                 "id": candidate.get("id"),
                 "name": candidate.get("candidateName"),
+                "avatarUrl": _candidate_avatar_url(candidate),
                 "score": int((candidate.get("analysis") or {}).get("Tổng điểm") or 0),
                 "jdFit": jd_fit,
                 "grade": str((candidate.get("analysis") or {}).get("Hạng") or "C"),
@@ -426,6 +447,7 @@ def save_manual_history_snapshot(user: AuthenticatedUser, payload: dict[str, Any
             {
                 "id": candidate.get("id"),
                 "name": candidate.get("candidateName"),
+                "avatarUrl": _candidate_avatar_url(candidate),
                 "fileName": candidate.get("fileName"),
                 "grade": grade,
                 "totalScore": int((candidate.get("analysis") or {}).get("Tổng điểm") or 0),
