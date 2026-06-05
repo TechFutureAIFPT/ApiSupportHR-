@@ -9,6 +9,38 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+### Run with Docker
+
+Docker is an optional local runtime. It does not replace the current Render Python deployment unless `render.yaml` is changed later.
+
+From the backend repo root (`Software/Web/BE`):
+
+```bash
+docker compose build
+docker compose up
+```
+
+Check the API:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Docker reads local secrets from `api_server/.env` through `docker-compose.yml`; `.env` is excluded from the image by `.dockerignore`.
+Do not share output from `docker compose config` or `docker inspect` because those commands can display environment variables from `.env`.
+
+When testing the mobile app against this Docker backend:
+
+- Expo web: `EXPO_PUBLIC_API_URL=http://localhost:8000`
+- Android emulator: `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`
+- Physical phone: use the computer LAN IP, for example `EXPO_PUBLIC_API_URL=http://192.168.x.x:8000`
+
 ### Environment
 
 - Keep your local `.env` for testing.
