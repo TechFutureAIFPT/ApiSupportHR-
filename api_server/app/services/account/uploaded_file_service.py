@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
+from app.services.account.persistence_service import save_file_extraction
 from app.services.account.shared import serialize, sorted_docs
 from app.services import vector_index_service
 
@@ -41,6 +42,15 @@ def save_uploaded_file(user: AuthenticatedUser, payload: dict[str, object]) -> s
         "uploadedAt": repo.server_timestamp(),
     }
     doc_ref.set(stored_payload)
+    save_file_extraction(
+        user,
+        file_name=file_name,
+        content_type=stored_payload["mimeType"],
+        file_size=stored_payload["fileSize"],
+        document_type=stored_payload["fileType"],
+        force_ocr=str(stored_payload["ocrMethod"]).lower() not in {"", "browser-local", "text"},
+        extracted_text=extracted_text,
+    )
     vector_index_service.try_sync_uploaded_file_to_vector_store(user, doc_ref.id, stored_payload)
     cleanup_uploaded_files(user, MAX_FILES_PER_USER)
     return doc_ref.id

@@ -583,7 +583,7 @@ async def run_smart_cv_analysis(
     candidates.sort(key=lambda candidate: (_candidate_total_score(candidate), str(candidate.get("fileName") or "")), reverse=True)
 
     history_id = await _sync_history_safe(
-        user=current_user if miss_entries else None,
+        user=current_user,
         jd_text=jd_text,
         weights=weights,
         hard_filters=hard_filters,

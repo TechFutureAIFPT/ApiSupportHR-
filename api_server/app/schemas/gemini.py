@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GeminiGenerateRequest(BaseModel):
@@ -12,7 +12,10 @@ class GeminiGenerateRequest(BaseModel):
 
 
 class GeminiGenerateResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     text: str
+    saved_record_id: str | None = Field(default=None, alias="savedRecordId")
 
 
 class GeminiEmbedRequest(BaseModel):
@@ -21,4 +24,7 @@ class GeminiEmbedRequest(BaseModel):
 
 
 class GeminiEmbedResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     vector: List[float]
+    saved_record_id: str | None = Field(default=None, alias="savedRecordId")

@@ -128,6 +128,73 @@ Lưu state ngắn hạn cho OAuth:
 - `createdAt`
 - `expiresAt`
 
+### `analysisJobs`
+
+Luu trang thai job phan tich CV bat dong bo:
+
+- `jobId`
+- `uid`
+- `status`
+- `progress`
+- `message`
+- `result`
+- `error`
+- `sourceTexts`
+- `createdAt`
+- `updatedAt`
+
+### `aiRequestHistory`
+
+Luu snapshot cac thao tac AI phu tro khi request co user:
+
+- `operation`
+- `request`
+- `response`
+- `metadata`
+- `uid`
+- `timestamp`
+
+Dang duoc dung cho Gemini chat/embed, JD structure/position/hard filters, interview questions, refine CV profile, classify industry, va enrich candidates.
+
+### `mobileQuickCvAnalyses`
+
+Luu ket qua quick score CV:
+
+- `request`
+- `response`
+- `itemCount`
+- `model`
+- `uid`
+- `timestamp`
+
+### `fileExtractions`
+
+Luu ket qua trich xuat text tu file khi request co user:
+
+- `fileName`
+- `mimeType`
+- `fileSize`
+- `documentType`
+- `forceOcr`
+- `extractedText`
+- `extractedTextLength`
+- `uid`
+- `timestamp`
+
+### `mobileJDStandardizations`
+
+Luu lich su chuan hoa JD mobile:
+
+- `jdText`
+- `targetPlatform`
+- `supplementalFields`
+- `response`
+- `sourceFile`
+- `score`
+- `title`
+- `uid`
+- `timestamp`
+
 ### `CLdl7JGuaOGIuijiDZeG`
 
 Đây là một collection id cố định đang được code gọi là `manual_history`.

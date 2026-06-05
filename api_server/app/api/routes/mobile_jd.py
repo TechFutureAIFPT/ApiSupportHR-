@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import ValidationError
 
+from app.api.deps import get_optional_current_user
 from app.core.config import get_settings
+from app.schemas.account import AuthenticatedUser
 from app.schemas.mobile_jd import JDSupplementalFields, JDStandardizeRequest, JDStandardizeResponse, TargetPlatform
+from app.services.account.persistence_service import save_mobile_jd_standardization
 from app.services.file_extraction_service import extract_text_from_upload
 from app.services.mobile_jd import standardize_jd_text
 
@@ -50,13 +53,26 @@ def _parse_supplemental_fields(raw_value: str | None) -> JDSupplementalFields | 
 
 
 @router.post("/standardize", response_model=JDStandardizeResponse)
-def standardize_jd(payload: JDStandardizeRequest) -> JDStandardizeResponse:
+def standardize_jd(
+    payload: JDStandardizeRequest,
+    current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
+) -> JDStandardizeResponse:
     try:
         jd_text = _append_supplemental_fields(payload.jd_text, payload.supplemental_fields)
         result = standardize_jd_text(jd_text, payload.target_platform)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    return JDStandardizeResponse.model_validate(result)
+    response = JDStandardizeResponse.model_validate(result)
+    response.saved_record_id = save_mobile_jd_standardization(
+        current_user,
+        jd_text=jd_text,
+        target_platform=payload.target_platform,
+        supplemental_fields=(
+            payload.supplemental_fields.model_dump(by_alias=True) if payload.supplemental_fields else None
+        ),
+        response_payload=response.model_dump(by_alias=True),
+    )
+    return response
 
 
 @router.post("/standardize-file", response_model=JDStandardizeResponse)
@@ -65,10 +81,12 @@ async def standardize_jd_file(
     target_platform: TargetPlatform = Form(default="generic"),
     supplemental_fields_json: str | None = Form(default=None),
     force_ocr: bool = Form(default=False),
+    current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
 ) -> JDStandardizeResponse:
     try:
         file_bytes = await file.read()
         settings = get_settings()
+        supplemental_fields = _parse_supplemental_fields(supplemental_fields_json)
         jd_text = await asyncio.to_thread(
             extract_text_from_upload,
             file_bytes=file_bytes,
@@ -78,8 +96,23 @@ async def standardize_jd_file(
             document_type="jd",
             api_keys=settings.quick_cv_gemini_api_keys,
         )
-        jd_text = _append_supplemental_fields(jd_text, _parse_supplemental_fields(supplemental_fields_json))
+        jd_text = _append_supplemental_fields(jd_text, supplemental_fields)
         result = standardize_jd_text(jd_text, target_platform)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    return JDStandardizeResponse.model_validate(result)
+    response = JDStandardizeResponse.model_validate(result)
+    response.saved_record_id = await asyncio.to_thread(
+        save_mobile_jd_standardization,
+        current_user,
+        jd_text=jd_text,
+        target_platform=target_platform,
+        supplemental_fields=supplemental_fields.model_dump(by_alias=True) if supplemental_fields else None,
+        response_payload=response.model_dump(by_alias=True),
+        source_file={
+            "fileName": file.filename or "uploaded-jd",
+            "mimeType": file.content_type or "",
+            "fileSize": len(file_bytes),
+            "forceOcr": force_ocr,
+        },
+    )
+    return response

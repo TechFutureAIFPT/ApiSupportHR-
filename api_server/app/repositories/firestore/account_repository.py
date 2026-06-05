@@ -20,6 +20,10 @@ GOOGLE_DRIVE_OAUTH_STATES_COLLECTION = "googleDriveOAuthStates"
 ANALYSIS_FEEDBACK_COLLECTION = "analysisFeedback"
 APPROVED_EXEMPLARS_COLLECTION = "approvedExemplars"
 ANALYSIS_JOBS_COLLECTION = "analysisJobs"
+AI_REQUEST_HISTORY_COLLECTION = "aiRequestHistory"
+QUICK_CV_SCORES_COLLECTION = "mobileQuickCvAnalyses"
+FILE_EXTRACTIONS_COLLECTION = "fileExtractions"
+MOBILE_JD_HISTORY_COLLECTION = "mobileJDStandardizations"
 
 
 def db():
@@ -80,6 +84,22 @@ def approved_exemplars():
 
 def analysis_jobs():
     return db().collection(ANALYSIS_JOBS_COLLECTION)
+
+
+def ai_request_history():
+    return db().collection(AI_REQUEST_HISTORY_COLLECTION)
+
+
+def quick_cv_scores():
+    return db().collection(QUICK_CV_SCORES_COLLECTION)
+
+
+def file_extractions():
+    return db().collection(FILE_EXTRACTIONS_COLLECTION)
+
+
+def mobile_jd_history():
+    return db().collection(MOBILE_JD_HISTORY_COLLECTION)
 
 
 def create_document(collection_ref):

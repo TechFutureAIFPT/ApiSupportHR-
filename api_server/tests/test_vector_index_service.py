@@ -81,16 +81,19 @@ class VectorIndexServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.user = AuthenticatedUser(uid="user-123", email="hr@example.com")
         self.fake_uploaded_files = FakeCollection()
+        self.fake_file_extractions = FakeCollection()
         self.fake_vectors = FakeCollection()
         self.fixed_time = datetime(2026, 5, 13, 10, 0, tzinfo=timezone.utc)
 
         self.original_uploaded_files = account_repo.uploaded_files
+        self.original_file_extractions = account_repo.file_extractions
         self.original_server_timestamp = account_repo.server_timestamp
         self.original_vector_library = vector_repository.vector_library
         self.original_embed_text = vector_index_service.embed_text
         self.original_vector_store_collection = os.getenv("VECTOR_STORE_FIRESTORE_COLLECTION")
 
         account_repo.uploaded_files = lambda: self.fake_uploaded_files  # type: ignore[assignment]
+        account_repo.file_extractions = lambda: self.fake_file_extractions  # type: ignore[assignment]
         account_repo.server_timestamp = lambda: self.fixed_time  # type: ignore[assignment]
         vector_repository.vector_library = lambda collection_name: self.fake_vectors  # type: ignore[assignment]
         vector_index_service.embed_text = lambda text, model: [0.9, 0.1]
@@ -99,6 +102,7 @@ class VectorIndexServiceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         account_repo.uploaded_files = self.original_uploaded_files  # type: ignore[assignment]
+        account_repo.file_extractions = self.original_file_extractions  # type: ignore[assignment]
         account_repo.server_timestamp = self.original_server_timestamp  # type: ignore[assignment]
         vector_repository.vector_library = self.original_vector_library  # type: ignore[assignment]
         vector_index_service.embed_text = self.original_embed_text
@@ -135,6 +139,12 @@ class VectorIndexServiceTests(unittest.TestCase):
         self.assertEqual(vector_record["metadata"]["ownerUid"], "user-123")
         self.assertEqual(vector_record["metadata"]["fileType"], "cv")
         self.assertEqual(vector_record["vectorModel"], get_settings().gemini_embedding_model)
+        self.assertEqual(len(self.fake_file_extractions.store), 1)
+        extraction_record = next(iter(self.fake_file_extractions.store.values()))
+        self.assertEqual(extraction_record["uid"], "user-123")
+        self.assertEqual(extraction_record["fileName"], "frontend-react-cv.pdf")
+        self.assertEqual(extraction_record["documentType"], "cv")
+        self.assertGreater(extraction_record["extractedTextLength"], 0)
 
     def test_delete_uploaded_file_removes_vector_record(self) -> None:
         file_id = uploaded_file_service.save_uploaded_file(

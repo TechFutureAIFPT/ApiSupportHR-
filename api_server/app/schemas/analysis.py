@@ -110,8 +110,11 @@ class CoreCvAnalysisRequest(BaseModel):
 
 
 class CoreCvAnalysisResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     candidates: List[Dict[str, Any]]
     pipeline: Dict[str, Any] = Field(default_factory=dict)
+    saved_history_id: str | None = Field(default=None, alias="savedHistoryId")
 
 
 class AnalysisJobAcceptedResponse(BaseModel):
@@ -138,10 +141,13 @@ class CvProfileRefineRequest(BaseModel):
 
 
 class CvProfileRefineResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     standardized_education: str | None = None
     validation_note: str | None = None
     warnings: List[str] = Field(default_factory=list)
     refined_name: str | None = None
+    saved_record_id: str | None = Field(default=None, alias="savedRecordId")
 
 
 class IndustryPrediction(BaseModel):
@@ -155,10 +161,13 @@ class CvIndustryClassificationRequest(BaseModel):
 
 
 class CvIndustryClassificationResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     predicted_label: str
     confidence: float | None = None
     top_predictions: List[IndustryPrediction] = Field(default_factory=list)
     model_source: str
+    saved_record_id: str | None = Field(default=None, alias="savedRecordId")
 
 
 class CvIndustryClassifierStatusResponse(BaseModel):
@@ -177,7 +186,10 @@ class CandidateEnrichmentRequest(BaseModel):
 
 
 class CandidateEnrichmentResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     candidates: List[Dict[str, Any]]
+    saved_record_id: str | None = Field(default=None, alias="savedRecordId")
 
 
 class QuickCvTextEntry(BaseModel):
@@ -208,6 +220,9 @@ class QuickCvScoreItem(BaseModel):
 
 
 class QuickCvScoreResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     items: List[QuickCvScoreItem]
     model: str
     usage_note: str = "AI output is a screening aid and should be reviewed by a recruiter."
+    saved_score_id: str | None = Field(default=None, alias="savedScoreId")

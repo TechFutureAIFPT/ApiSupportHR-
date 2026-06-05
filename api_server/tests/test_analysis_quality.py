@@ -1,18 +1,28 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import sys
 import types
 import unittest
 
 
+def _module_available(name: str) -> bool:
+    if name in sys.modules:
+        return True
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _install_dependency_stubs() -> None:
-    if "dotenv" not in sys.modules:
+    if not _module_available("dotenv"):
         dotenv_module = types.ModuleType("dotenv")
         dotenv_module.load_dotenv = lambda *args, **kwargs: None
         sys.modules["dotenv"] = dotenv_module
 
-    if "pydantic" not in sys.modules:
+    if not _module_available("pydantic"):
         pydantic_module = types.ModuleType("pydantic")
 
         class BaseModel:
@@ -42,7 +52,7 @@ def _install_dependency_stubs() -> None:
         pydantic_module.RootModel = RootModel
         sys.modules["pydantic"] = pydantic_module
 
-    if "firebase_admin" not in sys.modules:
+    if not _module_available("firebase_admin"):
         firebase_admin_module = types.ModuleType("firebase_admin")
         firebase_admin_module._apps = []
         firebase_admin_module.App = object
@@ -67,7 +77,7 @@ def _install_dependency_stubs() -> None:
         sys.modules["firebase_admin.credentials"] = credentials_module
         sys.modules["firebase_admin.firestore"] = firestore_module
 
-    if "fastapi" not in sys.modules:
+    if not _module_available("fastapi"):
         fastapi_module = types.ModuleType("fastapi")
 
         class HTTPException(Exception):
@@ -79,10 +89,10 @@ def _install_dependency_stubs() -> None:
         fastapi_module.HTTPException = HTTPException
         sys.modules["fastapi"] = fastapi_module
 
-    if "google" not in sys.modules:
+    if not _module_available("google"):
         sys.modules["google"] = types.ModuleType("google")
 
-    if "google.genai" not in sys.modules:
+    if not _module_available("google.genai"):
         google_genai_module = types.ModuleType("google.genai")
 
         class _FakeResponse:
@@ -100,7 +110,7 @@ def _install_dependency_stubs() -> None:
         sys.modules["google.genai"] = google_genai_module
         sys.modules["google"].genai = google_genai_module  # type: ignore[attr-defined]
 
-    if "google.generativeai" not in sys.modules:
+    if not _module_available("google.generativeai"):
         google_generativeai_module = types.ModuleType("google.generativeai")
         google_generativeai_module.configure = lambda *args, **kwargs: None
         google_generativeai_module.embed_content = lambda *args, **kwargs: {"embedding": [1.0, 0.0]}

@@ -73,3 +73,4 @@ class JDStandardizeResponse(BaseModel):
     platform_url: str = Field(alias="platformUrl")
     generated_at: str = Field(alias="generatedAt")
     source: Literal["ai", "fallback"] = "fallback"
+    saved_record_id: str | None = Field(default=None, alias="savedRecordId")
