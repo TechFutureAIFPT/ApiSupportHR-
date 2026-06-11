@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any
+import unicodedata
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.shared import serialize, sorted_docs, to_millis
+from app.utils.text_normalization import normalize_display_text
 
 
 MAX_HISTORY_ENTRIES_PER_USER = 100
@@ -85,13 +88,29 @@ def _score_number(value: Any, fallback: float = 0) -> float:
 
 
 def _first_text(record: dict[str, Any], keys: list[str], fallback: str = "") -> str:
+    alias_set = {_normalize_lookup_key(key) for key in keys}
     for key in keys:
         value = record.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return normalize_display_text(value.strip())
+        if isinstance(value, (int, float)):
+            return str(value)
+    for key, value in record.items():
+        if _normalize_lookup_key(str(key)) not in alias_set:
+            continue
+        if isinstance(value, str) and value.strip():
+            return normalize_display_text(value.strip())
         if isinstance(value, (int, float)):
             return str(value)
     return fallback
+
+
+def _normalize_lookup_key(value: str) -> str:
+    normalized = normalize_display_text(value)
+    decomposed = unicodedata.normalize("NFD", normalized)
+    ascii_text = "".join(char for char in decomposed if unicodedata.category(char) != "Mn")
+    ascii_text = ascii_text.replace("Đ", "D").replace("đ", "d")
+    return re.sub(r"\s+", " ", ascii_text.strip().lower())
 
 
 def _candidate_avatar_url(candidate: dict[str, Any]) -> str:
@@ -130,8 +149,8 @@ def _details(record: dict[str, Any], limit: int = 6) -> list[dict[str, Any]]:
             continue
         compacted.append(
             {
-                "Tiêu chí": _first_text(item, ["Tiêu chí", "TiÃªu chÃ­", "criterion", "name"]),
-                "Điểm": _first_text(item, ["Điểm", "Äiá»ƒm", "score"]),
+                "Tiêu chí": _first_text(item, ["Tiêu chí", "Tieu chi", "criterion", "name"]),
+                "Điểm": _first_text(item, ["Điểm", "Diem", "score"]),
                 "Dẫn chứng": _first_text(item, ["Dẫn chứng", "evidence", "Giải thích", "explanation"])[:MOBILE_TEXT_FIELD_LENGTH],
             }
         )

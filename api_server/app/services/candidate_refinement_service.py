@@ -29,7 +29,7 @@ def refine_cv_profile(cv_text: str, current_education: str | None, current_name:
         "candidate_refinement/education_validation",
         context={
             "cv_text": cv_text[:4000],
-            "current_education": current_education or "Chua co",
+            "current_education": current_education or "Chưa có",
         },
     )
     education_text = generate_content(
@@ -52,7 +52,7 @@ def refine_cv_profile(cv_text: str, current_education: str | None, current_name:
         {"temperature": 0.1, "top_p": 0.1, "top_k": 1},
     )
     refined_name = re.sub(r'^["\'`]+|["\'`]+$', "", refined_name_text.strip())
-    if not refined_name or refined_name.lower() in {"null", "khong tim thay"} or len(refined_name) < 2:
+    if not refined_name or refined_name.lower() in {"null", "khong tim thay", "không tìm thấy"} or len(refined_name) < 2:
         refined_name = None
 
     warnings = education_data.get("warnings")

@@ -27,6 +27,7 @@ from app.services.cv_analysis_service import (
     normalize_candidates_against_weights,
 )
 from app.services.language_service import build_analysis_text_bundle, normalize_cv_text_for_analysis_async
+from app.utils.text_normalization import normalize_display_text
 
 
 TOTAL_SCORE_KEY = "T\u1ed5ng \u0111i\u1ec3m"
@@ -45,7 +46,7 @@ def _normalize_file_name(value: str) -> str:
 
 
 def _normalize_ascii(value: str) -> str:
-    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = unicodedata.normalize("NFD", normalize_display_text(value or ""))
     normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
     normalized = normalized.replace("\u0111", "d").replace("\u0110", "d")
     return re.sub(r"[^a-z0-9]+", " ", normalized.lower()).strip()
@@ -77,8 +78,10 @@ def _candidate_file_key(candidate: dict[str, Any]) -> str:
 
 def _candidate_total_score(candidate: dict[str, Any]) -> float:
     analysis = candidate.get("analysis") or {}
-    for key in ("Tong diem", "Tổng điểm", "Tá»•ng Ä‘iá»ƒm", "TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"):
-        value = analysis.get(key)
+    aliases = {_normalize_ascii(key) for key in ("Tong diem", "Tổng điểm")}
+    for key, value in analysis.items():
+        if _normalize_ascii(str(key)) not in aliases:
+            continue
         if isinstance(value, (int, float)):
             return float(value)
         if isinstance(value, str):

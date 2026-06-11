@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from app.api.routes import account_router, ai_router, files_router, mobile_jd_router
 from app.core.config import get_settings
+from app.utils.text_normalization import normalize_payload_text
 
 
 settings = get_settings()
@@ -31,6 +36,51 @@ def _build_allowed_origins() -> list[str]:
     return sorted(origins)
 
 api_app = FastAPI(title=settings.app_name)
+
+
+@api_app.middleware("http")
+async def normalize_json_text_response(request: Request, call_next):
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+    if "application/json" not in content_type.lower():
+        return response
+
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+
+    if not body:
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=content_type,
+        )
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=content_type,
+        )
+
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+    normalized_body = json.dumps(
+        normalize_payload_text(payload),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    return Response(
+        content=normalized_body,
+        status_code=response.status_code,
+        headers=headers,
+        media_type="application/json",
+    )
 
 api_app.include_router(ai_router)
 api_app.include_router(files_router)

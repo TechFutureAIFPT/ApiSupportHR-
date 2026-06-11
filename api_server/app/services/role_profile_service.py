@@ -331,8 +331,8 @@ def resolve_role_profile(
 def build_role_profile_summary(role_profile: dict[str, Any]) -> str:
     if is_generic_role(role_profile):
         return (
-            "Khong xac dinh duoc vi tri cu the. "
-            "Hay phan tich theo JD thuc te, uu tien keyword, KPI va bang chung truc tiep trong CV."
+            "Không xác định được vị trí cụ thể. "
+            "Hãy phân tích theo JD thực tế, ưu tiên keyword, KPI và bằng chứng trực tiếp trong CV."
         )
 
     core = [str(item.get("label") or "") for item in role_profile.get("coreRequirements") or [] if str(item.get("label") or "").strip()]
@@ -342,8 +342,8 @@ def build_role_profile_summary(role_profile: dict[str, Any]) -> str:
     lines = [
         f"Role target: {role_profile.get('label') or 'Unknown'}",
         f"Collection: {role_profile.get('collectionKey') or 'generic'}",
-        f"Core requirements: {', '.join(core) if core else 'Khong co'}",
-        f"Secondary requirements: {', '.join(secondary) if secondary else 'Khong co'}",
+        f"Core requirements: {', '.join(core) if core else 'Không có'}",
+        f"Secondary requirements: {', '.join(secondary) if secondary else 'Không có'}",
         f"Display sections: {', '.join(sections) if sections else 'General fit'}",
     ]
     return "\n".join(lines)

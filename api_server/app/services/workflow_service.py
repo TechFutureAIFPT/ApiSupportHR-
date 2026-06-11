@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 from app.core.config import get_settings
 from app.prompts import render_prompt
 from app.services.gemini_service import generate_content
+from app.utils.text_normalization import normalize_display_text
 
 
 def _extract_json(text: str) -> Any:
@@ -34,10 +35,20 @@ def _format_jd_sections(data: Dict[str, Any]) -> str:
 
 
 def _normalize_ascii(value: str) -> str:
-    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = unicodedata.normalize("NFD", normalize_display_text(value or ""))
     normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
     normalized = normalized.replace("đ", "d").replace("Đ", "d")
     return re.sub(r"[^a-z0-9]+", " ", normalized.lower()).strip()
+
+
+def _get_record_value(record: Dict[str, Any], *keys: str, default: Any = None) -> Any:
+    alias_set = {_normalize_ascii(key) for key in keys}
+    for key, value in record.items():
+        if value is None or value == "":
+            continue
+        if _normalize_ascii(str(key)) in alias_set:
+            return value
+    return default
 
 
 def _normalize_location_text(value: str) -> str:
@@ -83,7 +94,7 @@ def structure_jd(raw_text: str) -> str:
     data = _extract_json(response_text)
     structured = _format_jd_sections(data)
     if not structured:
-        raise ValueError("Khong the trich xuat noi dung co y nghia tu JD.")
+        raise ValueError("Không thể trích xuất nội dung có ý nghĩa từ JD.")
     return structured
 
 
@@ -285,13 +296,14 @@ def extract_hard_filters(jd_text: str) -> Dict[str, str]:
 
 
 def _candidate_strength_weakness_areas(candidate: Dict[str, Any]) -> tuple[List[str], List[str]]:
-    details = (((candidate.get("analysis") or {}).get("Chi tiáº¿t")) or ((candidate.get("analysis") or {}).get("Chi tiÃ¡ÂºÂ¿t")) or [])
+    analysis = candidate.get("analysis") or {}
+    details = _get_record_value(analysis, "Chi tiết", "Chi tiet", default=[])
     strengths: List[str] = []
     weaknesses: List[str] = []
 
     for detail in details:
-        score_text = detail.get("Äiá»ƒm") or detail.get("Ã„ÂiÃ¡Â»Æ’m") or ""
-        criterion = detail.get("TiÃªu chÃ­") or detail.get("TiÃƒÂªu chÃƒÂ­") or ""
+        score_text = _get_record_value(detail, "Điểm", "Diem", default="")
+        criterion = _get_record_value(detail, "Tiêu chí", "Tieu chi", default="")
         if "/" not in score_text or not criterion:
             continue
         try:
@@ -333,10 +345,10 @@ def _create_specific_questions_prompt(analysis_data: Dict[str, Any], stats: Dict
             "candidate_job_title": candidate.get("jobTitle", ""),
             "candidate_industry": candidate.get("industry", ""),
             "candidate_level": candidate.get("experienceLevel", ""),
-            "candidate_score": analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m", analysis.get("Tá»•ng Ä‘iá»ƒm", 0)),
-            "candidate_rank": analysis.get("HÃ¡ÂºÂ¡ng", analysis.get("Háº¡ng", "")),
-            "candidate_strengths": ", ".join(analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV", analysis.get("Äiá»ƒm máº¡nh CV", []))),
-            "candidate_weaknesses": ", ".join(analysis.get("Ã„ÂiÃ¡Â»Æ’m yÃ¡ÂºÂ¿u CV", analysis.get("Äiá»ƒm yáº¿u CV", []))),
+            "candidate_score": _get_record_value(analysis, "Tổng điểm", "Tong diem", default=0),
+            "candidate_rank": _get_record_value(analysis, "Hạng", "Hang", default=""),
+            "candidate_strengths": ", ".join(_get_record_value(analysis, "Điểm mạnh CV", "Diem manh CV", default=[]) or []),
+            "candidate_weaknesses": ", ".join(_get_record_value(analysis, "Điểm yếu CV", "Diem yeu CV", default=[]) or []),
             "strong_areas": ", ".join(strengths),
             "weak_areas": ", ".join(weaknesses),
         },
@@ -347,12 +359,12 @@ def _create_comparative_questions_prompt(analysis_data: Dict[str, Any], stats: D
     profile_lines = []
     for index, candidate in enumerate(candidates, start=1):
         analysis = candidate.get("analysis") or {}
-        strengths = ", ".join((analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV", analysis.get("Äiá»ƒm máº¡nh CV", [])) or [])[:3])
-        weaknesses = ", ".join((analysis.get("Ã„ÂiÃ¡Â»Æ’m yÃ¡ÂºÂ¿u CV", analysis.get("Äiá»ƒm yáº¿u CV", [])) or [])[:2])
+        strengths = ", ".join((_get_record_value(analysis, "Điểm mạnh CV", "Diem manh CV", default=[]) or [])[:3])
+        weaknesses = ", ".join((_get_record_value(analysis, "Điểm yếu CV", "Diem yeu CV", default=[]) or [])[:2])
         profile_lines.append(
             f"{index}. {candidate.get('candidateName', '')} | "
-            f"Rank: {analysis.get('HÃ¡ÂºÂ¡ng', analysis.get('Háº¡ng', ''))} | "
-            f"Score: {analysis.get('TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m', analysis.get('Tá»•ng Ä‘iá»ƒm', 0))} | "
+            f"Rank: {_get_record_value(analysis, 'Hạng', 'Hang', default='')} | "
+            f"Score: {_get_record_value(analysis, 'Tổng điểm', 'Tong diem', default=0)} | "
             f"Title: {candidate.get('jobTitle', '')} | "
             f"Level: {candidate.get('experienceLevel', '')} | "
             f"Strengths: {strengths} | Weaknesses: {weaknesses}"

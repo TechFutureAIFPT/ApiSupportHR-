@@ -106,7 +106,7 @@ def _normalize_feedback_payload(
     payload_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     action = str(payload.get("action") or current.get("action") or "").strip().lower()
     if not action:
-        raise ValueError("Thieu action feedback.")
+        raise ValueError("Thiếu action feedback.")
 
     scope_key = _first_non_empty(
         payload.get("syncHistoryId"),
@@ -120,9 +120,9 @@ def _normalize_feedback_payload(
         payload.get("candidateName"),
     )
     if not scope_key:
-        raise ValueError("Can it nhat mot scope de gan feedback: syncHistoryId, historyId, sessionId hoac jdHash.")
+        raise ValueError("Cần ít nhất một phạm vi để gắn feedback: syncHistoryId, historyId, sessionId hoặc jdHash.")
     if not candidate_key:
-        raise ValueError("Can it nhat mot dinh danh ung vien: candidateId, fileName hoac candidateName.")
+        raise ValueError("Cần ít nhất một định danh ứng viên: candidateId, fileName hoặc candidateName.")
 
     ai_score = payload.get("aiScore", current.get("aiScore"))
     final_score = payload.get("finalScore", current.get("finalScore"))

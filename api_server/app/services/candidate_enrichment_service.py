@@ -71,11 +71,12 @@ TIER2_VN = ["vietnampost", "cuc buu chinh", "cmc", "bkav", "viettel solutions", 
 JD_FIT_CRITERION_LABEL = "Phù hợp JD (Job Fit)"
 JD_FIT_CRITERION_ALIASES = [JD_FIT_CRITERION_LABEL, "Phù hợp JD", "Job Fit", "Phu hop JD"]
 JD_FIT_MAX_SCORE = 20.0
-INDUSTRY_FIT_CRITERION_LABEL = "Phu hop nganh/nghe"
+INDUSTRY_FIT_CRITERION_LABEL = "Phù hợp ngành/nghề"
 INDUSTRY_FIT_CRITERION_ALIASES = [
     INDUSTRY_FIT_CRITERION_LABEL,
     "Industry Fit",
     "Phu hop nganh nghe",
+    "Phu hop nganh/nghe",
     "Chuẩn mẫu IT",
     "Chuẩn mẫu SALES",
     "Chuẩn mẫu MARKETING",
@@ -90,9 +91,6 @@ MAX_EMBEDDING_TEXT_LENGTH = 6000
 DETAIL_LIST_ALIASES = [
     "Chi tiet",
     "Chi tiết",
-    "Chi tiáº¿t",
-    "Chi tiÃ¡ÂºÂ¿t",
-    "Chi tiÃƒÂ¡Ã‚ÂºÃ‚Â¿t",
 ]
 
 
@@ -107,6 +105,57 @@ def _normalize_lookup_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", normalized.lower()).strip()
 
 
+_MOJIBAKE_DETECTOR = re.compile(
+    r"(?:\u00c3|\u00c4|\u00c6|\u00d0|\u00f0|\u00c2|\u00e2\u20ac|\u00e1\u00ba|\u00e1\u00bb|\ufffd)"
+)
+_VIETNAMESE_MARK_DETECTOR = re.compile(r"[\u00c0-\u1ef9\u0110\u0111]")
+
+
+def _display_text_score(value: str) -> int:
+    return (
+        len(_MOJIBAKE_DETECTOR.findall(value)) * -8
+        + len(_VIETNAMESE_MARK_DETECTOR.findall(value)) * 2
+        - (20 if "\ufffd" in value else 0)
+    )
+
+
+def _decode_mojibake_once(value: str) -> str | None:
+    for encoding in ("latin-1", "cp1252"):
+        try:
+            return value.encode(encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    return None
+
+
+def _normalize_display_text(value: str) -> str:
+    current = value
+    for _ in range(3):
+        if not _MOJIBAKE_DETECTOR.search(current):
+            break
+        decoded = _decode_mojibake_once(current)
+        if not decoded or decoded == current:
+            break
+        if _display_text_score(decoded) <= _display_text_score(current):
+            break
+        current = decoded
+    return current
+
+
+def _normalize_output_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return _normalize_display_text(value)
+    if isinstance(value, list):
+        return [_normalize_output_payload(item) for item in value]
+    if isinstance(value, dict):
+        normalized: Dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = _normalize_display_text(str(key))
+            normalized[normalized_key] = _normalize_output_payload(item)
+        return normalized
+    return value
+
+
 def _get_record_value(record: Dict[str, Any], aliases: List[str]) -> str:
     alias_set = {_normalize_lookup_key(alias) for alias in aliases}
     for key, value in record.items():
@@ -115,6 +164,16 @@ def _get_record_value(record: Dict[str, Any], aliases: List[str]) -> str:
         if _normalize_lookup_key(str(key)) in alias_set:
             return str(value).strip()
     return ""
+
+
+def _get_analysis_value(record: Dict[str, Any], aliases: List[str], default: Any = None) -> Any:
+    alias_set = {_normalize_lookup_key(alias) for alias in aliases}
+    for key, value in record.items():
+        if value is None or value == "":
+            continue
+        if _normalize_lookup_key(str(key)) in alias_set:
+            return value
+    return default
 
 
 def _get_analysis_details(analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -162,6 +221,82 @@ def _parse_detail_score(value: str) -> tuple[float | None, float | None]:
     return numeric, None
 
 
+def _get_analysis_total_score(analysis: Dict[str, Any]) -> float:
+    for key, value in analysis.items():
+        if _normalize_lookup_key(str(key)) in {"tong diem", "total score", "score"}:
+            parsed = _parse_numeric_value(value)
+            if parsed is not None:
+                return max(0.0, min(100.0, parsed))
+
+    for key in ("Tổng điểm", "Tong diem"):
+        parsed = _parse_numeric_value(analysis.get(key))
+        if parsed is not None:
+            return max(0.0, min(100.0, parsed))
+
+    return 0.0
+
+
+def _build_stage_decision(candidate: Dict[str, Any], hard_filters: Dict[str, Any]) -> Dict[str, Any]:
+    analysis = candidate.get("analysis") if isinstance(candidate.get("analysis"), dict) else {}
+    score = _get_analysis_total_score(analysis or {})
+    hard_failure = str(candidate.get("hardFilterFailureReason") or "").strip()
+    location_match = candidate.get("locationMatch")
+    threshold = float(hard_filters.get("autoAdvanceThreshold") or hard_filters.get("minPassScore") or 75)
+
+    blocking_reasons: List[str] = []
+    if hard_failure:
+        blocking_reasons.append(hard_failure)
+    if location_match is False:
+        blocking_reasons.append("Không đạt yêu cầu địa điểm bắt buộc.")
+
+    if blocking_reasons:
+        return {
+            "status": "hold",
+            "label": "Giữ lại vòng ứng tuyển",
+            "autoAdvance": False,
+            "currentStage": "Ứng tuyển",
+            "recommendedStage": "Ứng tuyển",
+            "scoreThreshold": threshold,
+            "reason": "Ứng viên có điểm đánh giá nhưng chưa đạt tiêu chí bắt buộc.",
+            "blockingReasons": blocking_reasons,
+        }
+
+    if score >= threshold:
+        return {
+            "status": "ready_to_advance",
+            "label": "Sẵn sàng chuyển vòng",
+            "autoAdvance": True,
+            "currentStage": "Ứng tuyển",
+            "recommendedStage": "Vòng tiếp theo",
+            "scoreThreshold": threshold,
+            "reason": "Đạt ngưỡng điểm và không vi phạm tiêu chí bắt buộc.",
+            "blockingReasons": [],
+        }
+
+    if score >= 50:
+        return {
+            "status": "review",
+            "label": "Cần HR rà soát",
+            "autoAdvance": False,
+            "currentStage": "Ứng tuyển",
+            "recommendedStage": "Rà soát thủ công",
+            "scoreThreshold": threshold,
+            "reason": "Điểm phù hợp ở mức trung bình, nên kiểm tra thêm bằng chứng trước khi chuyển vòng.",
+            "blockingReasons": [],
+        }
+
+    return {
+        "status": "not_ready",
+        "label": "Chưa nên chuyển vòng",
+        "autoAdvance": False,
+        "currentStage": "Ứng tuyển",
+        "recommendedStage": "Không đề xuất",
+        "scoreThreshold": threshold,
+        "reason": "Điểm phù hợp còn thấp so với ngưỡng chuyển vòng.",
+        "blockingReasons": [],
+    }
+
+
 def _find_detail_index(details: List[Dict[str, Any]], aliases: List[str]) -> int | None:
     alias_set = {_normalize_lookup_key(alias) for alias in aliases}
     for index, item in enumerate(details):
@@ -175,16 +310,16 @@ def _find_detail_index(details: List[Dict[str, Any]], aliases: List[str]) -> int
 
 def _detail_item(title: str, score: str, formula: str, evidence: str, explanation: str) -> Dict[str, str]:
     return {
-        "TiÃªu chÃ­": title,
-        "TiÃƒÂªu chÃƒÂ­": title,
-        "Äiá»ƒm": score,
-        "Ã„ÂiÃ¡Â»Æ’m": score,
-        "CÃ´ng thá»©c": formula,
-        "CÃƒÂ´ng thÃ¡Â»Â©c": formula,
-        "Dáº«n chá»©ng": evidence,
-        "DÃ¡ÂºÂ«n chÃ¡Â»Â©ng": evidence,
-        "Giáº£i thÃ­ch": explanation,
-        "GiÃ¡ÂºÂ£i thÃƒÂ­ch": explanation,
+        "Tieu chi": title,
+        "Tiêu chí": title,
+        "Diem": score,
+        "Điểm": score,
+        "Cong thuc": formula,
+        "Công thức": formula,
+        "Dan chung": evidence,
+        "Dẫn chứng": evidence,
+        "Giai thich": explanation,
+        "Giải thích": explanation,
     }
 
 
@@ -196,12 +331,12 @@ def _extract_skills_from_jd(jd_text: str) -> List[str]:
 def _extract_skills_from_candidate(candidate: Dict[str, Any]) -> List[str]:
     analysis = candidate.get("analysis") or {}
     details = _get_analysis_details(analysis)
-    strengths = analysis.get("Äiá»ƒm máº¡nh CV") or analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV") or []
+    strengths = _get_analysis_value(analysis, ["Điểm mạnh CV", "Diem manh CV"], [])
     texts = [
         candidate.get("jobTitle", ""),
         candidate.get("industry", ""),
         candidate.get("department", ""),
-        *[str(item.get("Dáº«n chá»©ng") or item.get("DÃ¡ÂºÂ«n chÃ¡Â»Â©ng") or "") for item in details if isinstance(item, dict)],
+        *[_get_record_value(item, ["Dẫn chứng", "Dan chung"]) for item in details if isinstance(item, dict)],
         *[str(item) for item in strengths],
     ]
     combined = " ".join(texts).lower()
@@ -211,12 +346,12 @@ def _extract_skills_from_candidate(candidate: Dict[str, Any]) -> List[str]:
 def _extract_companies_from_candidate(candidate: Dict[str, Any]) -> List[str]:
     analysis = candidate.get("analysis") or {}
     details = _get_analysis_details(analysis)
-    strengths = analysis.get("Äiá»ƒm máº¡nh CV") or analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV") or []
+    strengths = _get_analysis_value(analysis, ["Điểm mạnh CV", "Diem manh CV"], [])
     evidence = " ".join([
         str(candidate.get("jobTitle", "")),
         str(candidate.get("industry", "")),
         str(candidate.get("department", "")),
-        *[str(item.get("Dáº«n chá»©ng") or item.get("DÃ¡ÂºÂ«n chÃ¡Â»Â©ng") or "") for item in details if isinstance(item, dict)],
+        *[_get_record_value(item, ["Dẫn chứng", "Dan chung"]) for item in details if isinstance(item, dict)],
         *[str(item) for item in strengths],
     ]).lower()
     return [name for name in COMPANY_NAME_WORDS if name in evidence]
@@ -264,13 +399,13 @@ def _find_best_evidence_sentence(text: str, terms: List[str]) -> str:
 def _build_candidate_evidence_corpus(candidate: Dict[str, Any], cv_text: str = "") -> str:
     analysis = candidate.get("analysis") or {}
     details = _get_analysis_details(analysis)
-    strengths = analysis.get("Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV") or analysis.get("Ãƒâ€žÃ‚ÂiÃƒÂ¡Ã‚Â»Ã†â€™m mÃƒÂ¡Ã‚ÂºÃ‚Â¡nh CV") or []
+    strengths = _get_analysis_value(analysis, ["Điểm mạnh CV", "Diem manh CV"], [])
     texts = [
         cv_text,
         candidate.get("jobTitle", ""),
         candidate.get("industry", ""),
         candidate.get("department", ""),
-        *[str(item.get("DÃ¡ÂºÂ«n chÃ¡Â»Â©ng") or item.get("DÃƒÂ¡Ã‚ÂºÃ‚Â«n chÃƒÂ¡Ã‚Â»Ã‚Â©ng") or "") for item in details if isinstance(item, dict)],
+        *[_get_record_value(item, ["Dẫn chứng", "Dan chung"]) for item in details if isinstance(item, dict)],
         *[str(item) for item in strengths],
     ]
     return " ".join(str(text or "") for text in texts if str(text or "").strip())
@@ -321,19 +456,19 @@ def _check_bias_risk(filters: Dict[str, Any]) -> List[str]:
     warnings: List[str] = []
     age = filters.get("age") or {}
     if isinstance(age, dict) and (age.get("min") is not None or age.get("max") is not None):
-        warnings.append(f"Canh bao: Bo loc tuoi ({age.get('min', '?')}â€“{age.get('max', '?')}) co the vi pham Dieu 8 BLLD 2019.")
+        warnings.append(f"Cảnh báo: Bộ lọc tuổi ({age.get('min', '?')}-{age.get('max', '?')}) có thể vi phạm Điều 8 BLLĐ 2019.")
     if filters.get("gender"):
-        warnings.append("Canh bao: Bo loc gioi tinh co the vi pham luat Binh dang lao dong Viet Nam.")
+        warnings.append("Cảnh báo: Bộ lọc giới tính có thể vi phạm luật Bình đẳng lao động Việt Nam.")
     if filters.get("ethnicity"):
-        warnings.append("Canh bao: Bo loc dan toc co the vi pham Dieu 8 BLLD 2019.")
+        warnings.append("Cảnh báo: Bộ lọc dân tộc có thể vi phạm Điều 8 BLLĐ 2019.")
     if filters.get("religion"):
-        warnings.append("Canh bao: Bo loc ton giao co the vi pham quyen tu do tin nguong.")
+        warnings.append("Cảnh báo: Bộ lọc tôn giáo có thể vi phạm quyền tự do tín ngưỡng.")
     if filters.get("maritalStatus"):
-        warnings.append("Canh bao: Bo loc tinh trang hon nhan co the vi pham Dieu 36 BLLD 2019.")
+        warnings.append("Cảnh báo: Bộ lọc tình trạng hôn nhân có thể vi phạm Điều 36 BLLĐ 2019.")
     if warnings:
         warnings.extend([
-            "Dieu 8 BLLD 2019 â€” Nghiem cam phan biet doi xu tren co so gioi tinh, tuoi tac, ton giao, dan toc.",
-            "Dieu 36 BLLD 2019 â€” Khong duoc yeu cau xac nhan tinh trang hon nhan khi tuyen dung.",
+            "Điều 8 BLLĐ 2019 - Nghiêm cấm phân biệt đối xử trên cơ sở giới tính, tuổi tác, tôn giáo, dân tộc.",
+            "Điều 36 BLLĐ 2019 - Không được yêu cầu xác nhận tình trạng hôn nhân khi tuyển dụng.",
         ])
     return warnings
 
@@ -373,15 +508,17 @@ def _analyze_soft_skills(cv_text: str) -> Dict[str, Dict[str, Any]]:
 
 def _infer_level(title: str) -> int:
     lower = title.lower()
-    if re.search(r"director|vp|vice president|cto|ceo|cfo", lower):
+    normalized = _normalize_lookup_key(title)
+    searchable = f"{lower} {normalized}"
+    if re.search(r"director|vp|vice president|cto|ceo|cfo", searchable):
         return 6
-    if re.search(r"manager|giam doc|truong phong|head", lower):
+    if re.search(r"manager|giam doc|truong phong|head", searchable):
         return 5
-    if re.search(r"lead|team lead|truong nhom", lower):
+    if re.search(r"lead|team lead|truong nhom", searchable):
         return 4
-    if re.search(r"senior|sr\.|chuyen gia|expert|cao cap", lower):
+    if re.search(r"senior|sr\.|chuyen gia|expert|cao cap", searchable):
         return 3
-    if re.search(r"intern|fresher|thuc tap", lower):
+    if re.search(r"intern|fresher|thuc tap", searchable):
         return 0
     return 2
 
@@ -393,14 +530,36 @@ def _analyze_career_velocity(experience_text: str) -> Dict[str, Any]:
     current_company = ""
     current_year = 2026
     for line in [line for line in re.split(r"\n|\r", experience_text) if len(line.strip()) > 5]:
-        title_match = re.search(r"(?:chá»©c danh|vá»‹ trÃ­|position|role|title)[:\s]*(.+)", line, re.IGNORECASE)
-        company_match = re.search(r"(?:cÃ´ng ty|company|doanh nghiá»‡p|táº¡i)[:\s]*(.+)", line, re.IGNORECASE)
-        year_match = re.findall(r"(?:20\d{2}|19\d{2})(?:\s*[-â€“]\s*(?:20\d{2}|19\d{2}|nay|hiá»‡n táº¡i|present))?", line, re.IGNORECASE)
-        if title_match:
-            current_title = title_match.group(1).strip()
+        normalized_line = _normalize_lookup_key(line)
+        title_value = ""
+        company_value = ""
+        if ":" in line:
+            prefix, raw_value = line.split(":", 1)
+            prefix_key = _normalize_lookup_key(prefix)
+            if prefix_key in {"chuc danh", "vi tri", "position", "role", "title"}:
+                title_value = raw_value.strip()
+            elif prefix_key in {"cong ty", "company", "doanh nghiep", "tai"}:
+                company_value = raw_value.strip()
+        if not title_value:
+            title_match = re.search(r"(?:chuc danh|vi tri|position|role|title)\s+(.+)", normalized_line, re.IGNORECASE)
+            title_value = title_match.group(1).strip() if title_match else ""
+        if not company_value:
+            company_match = re.search(r"(?:cong ty|company|doanh nghiep|tai)\s+(.+)", normalized_line, re.IGNORECASE)
+            company_value = company_match.group(1).strip() if company_match else ""
+        year_match = re.findall(
+            r"(?:20\d{2}|19\d{2})(?:\s*[-–]\s*(?:20\d{2}|19\d{2}|nay|hiện tại|present))?",
+            line,
+            re.IGNORECASE,
+        ) or re.findall(
+            r"(?:20\d{2}|19\d{2})(?:\s*[-]\s*(?:20\d{2}|19\d{2}|nay|hien tai|present))?",
+            normalized_line,
+            re.IGNORECASE,
+        )
+        if title_value:
+            current_title = title_value
             current_level = _infer_level(current_title)
-        if company_match:
-            current_company = company_match.group(1).strip()
+        if company_value:
+            current_company = company_value
         if year_match:
             years = re.findall(r"\d{4}", " ".join(year_match))
             if years:
@@ -408,11 +567,11 @@ def _analyze_career_velocity(experience_text: str) -> Dict[str, Any]:
                 end_year = int(years[1]) if len(years) > 1 else current_year
                 months = max(0, (end_year - start_year) * 12)
                 is_promotion = len(milestones) > 0 and current_level > milestones[-1]["level"]
-                milestones.append({"title": current_title or "Khong ro chuc danh", "level": current_level, "company": current_company, "durationMonths": months, "isPromotion": is_promotion})
+                milestones.append({"title": current_title or "Không rõ chức danh", "level": current_level, "company": current_company, "durationMonths": months, "isPromotion": is_promotion})
                 current_title = ""
                 current_company = ""
     if not milestones:
-        return {"peakLevel": 0, "peakTitle": "Khong ro", "totalMonths": 0, "promotionMonths": 0, "promotionCount": 0, "avgMonthsPerLevel": 0, "potentialScore": 0, "velocityTag": "normal"}
+        return {"peakLevel": 0, "peakTitle": "Không rõ", "totalMonths": 0, "promotionMonths": 0, "promotionCount": 0, "avgMonthsPerLevel": 0, "potentialScore": 0, "velocityTag": "normal"}
     peak = max(milestones, key=lambda item: item["level"])
     total_months = sum(item["durationMonths"] for item in milestones)
     promotion_months = sum(item["durationMonths"] for item in milestones if item["isPromotion"])
@@ -514,7 +673,7 @@ def _score_skill_match(
         terms = [*list(requirement.get("terms") or []), *list(requirement.get("evidenceTerms") or [])]
         equivalent_terms = list(requirement.get("equivalentTerms") or [])
         jd_terms = [requirement_label, *terms, *equivalent_terms]
-        jd_evidence = _find_best_evidence_sentence(jd_text, jd_terms) or f"JD co yeu cau lien quan den {requirement_label}."
+        jd_evidence = _find_best_evidence_sentence(jd_text, jd_terms) or f"JD có yêu cầu liên quan đến {requirement_label}."
 
         exact_term = next((term for term in terms if _contains_lookup_term(evidence_corpus, term)), "")
         transfer_term = next((term for term in equivalent_terms if _contains_lookup_term(evidence_corpus, term)), "")
@@ -532,7 +691,7 @@ def _score_skill_match(
                     "cvEvidence": cv_evidence,
                     "matchType": "exact",
                     "score": 0.94,
-                    "reason": f"CV co bang chung truc tiep cho nhom nang luc {requirement_label}.",
+                    "reason": f"CV có bằng chứng trực tiếp cho nhóm năng lực {requirement_label}.",
                 }
             )
         elif transfer_term and cv_evidence:
@@ -547,7 +706,7 @@ def _score_skill_match(
                     "cvEvidence": cv_evidence,
                     "matchType": "transfer",
                     "score": 0.78,
-                    "reason": f"CV co nang luc tuong duong cho nhom {requirement_label}, nhung cach dien dat khong trung hoan toan voi JD.",
+                    "reason": f"CV có năng lực tương đương cho nhóm {requirement_label}, nhưng cách diễn đạt không trùng hoàn toàn với JD.",
                 }
             )
         else:
@@ -557,10 +716,10 @@ def _score_skill_match(
                     "section": section,
                     "requirement": requirement_label,
                     "jdEvidence": jd_evidence,
-                    "cvEvidence": f"Khong tim thay bang chung ro rang cho {requirement_label} trong CV da trich xuat.",
+                    "cvEvidence": f"Không tìm thấy bằng chứng rõ ràng cho {requirement_label} trong CV đã trích xuất.",
                     "matchType": "incorrect",
                     "score": 0.0,
-                    "reason": f"Nhom nang luc {requirement_label} chua co bang chung du ro trong CV.",
+                    "reason": f"Nhóm năng lực {requirement_label} chưa có bằng chứng đủ rõ trong CV.",
                 }
             )
 
@@ -585,7 +744,7 @@ def _score_skill_match(
 
 def _apply_company_tier_multiplier(base_score: float, companies: List[str]) -> Dict[str, Any]:
     if not companies:
-        return {"adjustedScore": base_score, "multipliers": {}, "reasoning": "Khong nhan dien duoc cong ty nao trong CV.", "recognizedCompanies": []}
+        return {"adjustedScore": base_score, "multipliers": {}, "reasoning": "Không nhận diện được công ty nào trong CV.", "recognizedCompanies": []}
     multipliers: Dict[str, float] = {}
     recognized: List[str] = []
     avg_multiplier = 1.0
@@ -602,7 +761,7 @@ def _apply_company_tier_multiplier(base_score: float, companies: List[str]) -> D
         avg_multiplier += multiplier - 1
     avg_multiplier = avg_multiplier / len(companies) + 1
     adjusted = min(100, round(base_score * avg_multiplier, 1))
-    return {"adjustedScore": adjusted, "multipliers": multipliers, "reasoning": f"Nhan dien {len(recognized)} cong ty uy tin. He so x{avg_multiplier:.2f} -> +{adjusted - base_score:.1f} diem.", "recognizedCompanies": recognized}
+    return {"adjustedScore": adjusted, "multipliers": multipliers, "reasoning": f"Nhận diện {len(recognized)} công ty uy tín. Hệ số x{avg_multiplier:.2f} -> +{adjusted - base_score:.1f} điểm.", "recognizedCompanies": recognized}
 
 
 def _detect_boost_level(score: float, evidence: str) -> Optional[str]:
@@ -826,17 +985,17 @@ def _compute_industry_fit(
 
     if target_source == "classifier_inferred":
         explanation = (
-            "Khong thay du manh dau hieu nganh o phan cau hinh vao, nen he thong tam suy ra "
-            "nganh muc tieu tu classifier roi doi chieu them voi vector similarity."
+            "Không thấy đủ mạnh dấu hiệu ngành ở phần cấu hình vào, nên hệ thống tạm suy ra "
+            "ngành mục tiêu từ classifier rồi đối chiếu thêm với vector similarity."
         )
     elif classifier_signal["matched"]:
         explanation = (
-            f"Classifier va vector similarity deu nghieng ve nhom {target_industry.upper()}, "
-            "vi vay CV duoc cong diem phu hop nganh/nghe."
+            f"Classifier và vector similarity đều nghiêng về nhóm {target_industry.upper()}, "
+            "vì vậy CV được cộng điểm phù hợp ngành/nghề."
         )
     else:
         explanation = (
-            f"Classifier chua xac nhan ro nhom {target_industry.upper()} nen diem phu hop nganh/nghe bi gioi han."
+            f"Classifier chưa xác nhận rõ nhóm {target_industry.upper()} nên điểm phù hợp ngành/nghề bị giới hạn."
         )
 
     return {
@@ -875,7 +1034,7 @@ def _upsert_industry_fit_detail(
     detail_index = _find_detail_index(details, INDUSTRY_FIT_CRITERION_ALIASES)
     previous_score = 0.0
     if detail_index is not None:
-        score_text = _get_record_value(details[detail_index], ["Äiá»ƒm", "Diem", "Score"])
+        score_text = _get_record_value(details[detail_index], ["Điểm", "Diem", "Score"])
         previous_score = _parse_detail_score(score_text)[0] or 0.0
 
     fit_payload = _compute_industry_fit(
@@ -906,17 +1065,12 @@ def _upsert_industry_fit_detail(
         details[detail_index] = detail_payload
 
     current_total = (
-        _parse_numeric_value(analysis.get("Tá»•ng Ä‘iá»ƒm"))
-        or _parse_numeric_value(analysis.get("Tong diem"))
-        or _parse_numeric_value(analysis.get("TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"))
-        or _parse_numeric_value(analysis.get("TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“iÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m"))
+        _parse_numeric_value(_get_analysis_value(analysis, ["Tổng điểm", "Tong diem"]))
     )
     if current_total is not None:
         updated_total = max(0.0, min(100.0, current_total + (float(fit_payload["finalScore"]) - previous_score)))
-        analysis["Tá»•ng Ä‘iá»ƒm"] = round(updated_total, 1)
+        analysis["Tổng điểm"] = round(updated_total, 1)
         analysis["Tong diem"] = round(updated_total, 1)
-        analysis["TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
-        analysis["TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“iÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
 
 
 def _compute_jd_cv_embedding_match(
@@ -1026,17 +1180,12 @@ def _upsert_jd_fit_detail(
         details[detail_index] = detail_payload
 
     current_total = (
-        _parse_numeric_value(analysis.get("Tổng điểm"))
-        or _parse_numeric_value(analysis.get("Tong diem"))
-        or _parse_numeric_value(analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"))
-        or _parse_numeric_value(analysis.get("TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"))
+        _parse_numeric_value(_get_analysis_value(analysis, ["Tổng điểm", "Tong diem"]))
     )
     if current_total is not None:
         updated_total = max(0.0, min(100.0, current_total + (final_score - previous_score)))
         analysis["Tổng điểm"] = round(updated_total, 1)
         analysis["Tong diem"] = round(updated_total, 1)
-        analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tổng điểm"]
-        analysis["TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"] = analysis["Tổng điểm"]
 
 
 def _upsert_jd_fit_detail(
@@ -1052,7 +1201,7 @@ def _upsert_jd_fit_detail(
     detail_index = _find_detail_index(details, JD_FIT_CRITERION_ALIASES)
     previous_score = 0.0
     if detail_index is not None:
-        score_text = _get_record_value(details[detail_index], ["Äiá»ƒm", "Diem", "Score"])
+        score_text = _get_record_value(details[detail_index], ["Điểm", "Diem", "Score"])
         previous_score = _parse_detail_score(score_text)[0] or 0.0
 
     role_profile = resolve_role_profile(
@@ -1094,23 +1243,23 @@ def _upsert_jd_fit_detail(
 
     evidence_parts: List[str] = []
     if role_profile and not is_generic_role(role_profile):
-        evidence_parts.append(f"Vi tri muc tieu: {role_profile['label']}")
+        evidence_parts.append(f"Vị trí mục tiêu: {role_profile['label']}")
     if skill_match["matchedSkills"]:
-        evidence_parts.append(f"Ká»¹ nÄƒng khá»›p: {', '.join(skill_match['matchedSkills'][:6])}")
+        evidence_parts.append(f"Kỹ năng khớp: {', '.join(skill_match['matchedSkills'][:6])}")
     if skill_match["transferMatches"]:
-        evidence_parts.append(f"Khá»›p chuyá»ƒn Ä‘á»•i: {'; '.join(skill_match['transferMatches'][:3])}")
+        evidence_parts.append(f"Khớp chuyển đổi: {'; '.join(skill_match['transferMatches'][:3])}")
     if skill_match["unmatchedSkills"]:
-        evidence_parts.append(f"CÃ²n thiáº¿u: {', '.join(skill_match['unmatchedSkills'][:4])}")
+        evidence_parts.append(f"Còn thiếu: {', '.join(skill_match['unmatchedSkills'][:4])}")
     if semantic_match:
         evidence_parts.append(
             f"Embedding JD/CV {semantic_match['similarity'] * 100:.1f}% ({semantic_match['queryModel']})"
         )
-    evidence = " | ".join(evidence_parts) or "ChÆ°a cÃ³ Ä‘á»§ dá»¯ liá»‡u Ä‘á»ƒ suy ra pháº§n so khá»›p JD/CV."
+    evidence = " | ".join(evidence_parts) or "Chưa có đủ dữ liệu để suy ra phần so khớp JD/CV."
 
     if semantic_match and role_profile and not is_generic_role(role_profile):
         explanation = (
-            f"So khop Job Fit uu tien nang luc chuyen mon cua {role_profile['label']}, "
-            f"sau do doi chieu voi do tuong dong embedding JD/CV."
+            f"So khớp Job Fit ưu tiên năng lực chuyên môn của {role_profile['label']}, "
+            f"sau đó đối chiếu với độ tương đồng embedding JD/CV."
         )
         formula = (
             f"max(AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}, "
@@ -1119,19 +1268,19 @@ def _upsert_jd_fit_detail(
         )
     elif semantic_match:
         explanation = (
-            f"So khá»›p JD/CV láº¥y má»©c cao hÆ¡n giá»¯a Ä‘iá»ƒm AI gá»‘c "
-            f"{_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)} vÃ  "
-            f"Ä‘iá»ƒm semantic embedding {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}."
+            f"So khớp JD/CV lấy mức cao hơn giữa điểm AI gốc "
+            f"{_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)} và "
+            f"điểm semantic embedding {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}."
         )
         formula = (
             f"max(AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}, "
             f"Vector semantic {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)})"
         )
     elif role_profile and not is_generic_role(role_profile):
-        explanation = f"Khong tao duoc semantic embedding on dinh, nen Job Fit duoc suy ra tu bang chung chuyen mon cua {role_profile['label']}."
+        explanation = f"Không tạo được semantic embedding ổn định, nên Job Fit được suy ra từ bằng chứng chuyên môn của {role_profile['label']}."
         formula = f"max(AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}, Role fit {_format_score_value(role_score)}/{_format_score_value(JD_FIT_MAX_SCORE)})"
     else:
-        explanation = "Giá»¯ láº¡i Ä‘iá»ƒm Job Fit hiá»‡n cÃ³ vÃ¬ chÆ°a táº¡o Ä‘Æ°á»£c semantic embedding á»•n Ä‘á»‹nh cho JD/CV."
+        explanation = "Giữ lại điểm Job Fit hiện có vì chưa tạo được semantic embedding ổn định cho JD/CV."
         formula = f"AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}"
 
     candidate["jdCvMatchInsights"] = {
@@ -1164,17 +1313,12 @@ def _upsert_jd_fit_detail(
         details[detail_index] = detail_payload
 
     current_total = (
-        _parse_numeric_value(analysis.get("Tá»•ng Ä‘iá»ƒm"))
-        or _parse_numeric_value(analysis.get("Tong diem"))
-        or _parse_numeric_value(analysis.get("TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"))
-        or _parse_numeric_value(analysis.get("TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“iÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m"))
+        _parse_numeric_value(_get_analysis_value(analysis, ["Tổng điểm", "Tong diem"]))
     )
     if current_total is not None:
         updated_total = max(0.0, min(100.0, current_total + (final_score - previous_score)))
-        analysis["Tá»•ng Ä‘iá»ƒm"] = round(updated_total, 1)
-        analysis["Tong diem"] = round(updated_total, 1)
-        analysis["TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
-        analysis["TÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ng ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“iÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€ Ã¢â‚¬â„¢m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
+        analysis["Tổng điểm"] = round(updated_total, 1)
+        analysis["Tong diem"] = analysis["Tổng điểm"]
 
 
 def enrich_candidates(
@@ -1233,13 +1377,15 @@ def enrich_candidates(
 
         companies = _extract_companies_from_candidate(candidate)
         if companies:
-            base_score = analysis.get("Tá»•ng Ä‘iá»ƒm") or analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m") or 50
+            base_score = (
+                _get_analysis_value(analysis, ["Tổng điểm", "Tong diem"], 50)
+            )
             tiered = _apply_company_tier_multiplier(float(base_score), companies)
             if tiered["adjustedScore"] != base_score:
-                analysis["Tá»•ng Ä‘iá»ƒm"] = min(100, tiered["adjustedScore"])
-                analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
+                analysis["Tổng điểm"] = min(100, tiered["adjustedScore"])
+                analysis["Tong diem"] = analysis["Tổng điểm"]
                 details.append(_detail_item(
-                    "Há»‡ sá»‘ uy tÃ­n cÃ´ng ty",
+                    "Hệ số uy tín công ty",
                     f"{'+' if tiered['adjustedScore'] - base_score > 0 else ''}{tiered['adjustedScore'] - base_score:.1f}",
                     tiered["reasoning"],
                     ", ".join([f"{name} (x{multiplier})" for name, multiplier in tiered["multipliers"].items() if multiplier > 1]),
@@ -1250,9 +1396,9 @@ def enrich_candidates(
             criteria_scores: Dict[str, float] = {}
             criteria_evidence: Dict[str, str] = {}
             for item in details:
-                score_text = str(item.get("Äiá»ƒm") or item.get("Ã„ÂiÃ¡Â»Æ’m") or "0")
-                criteria = str(item.get("TiÃªu chÃ­") or item.get("TiÃƒÂªu chÃƒÂ­") or "")
-                evidence = str(item.get("Dáº«n chá»©ng") or item.get("DÃ¡ÂºÂ«n chÃ¡Â»Â©ng") or "")
+                score_text = _get_record_value(item, ["Điểm", "Diem"]) or "0"
+                criteria = _get_record_value(item, ["Tiêu chí", "Tieu chi"])
+                evidence = _get_record_value(item, ["Dẫn chứng", "Dan chung"])
                 try:
                     criteria_scores[criteria] = float(score_text.split("/")[0].replace("+", ""))
                 except Exception:
@@ -1270,10 +1416,10 @@ def enrich_candidates(
                         signal["reason"],
                         signal["reason"],
                     ))
-                current_score = analysis.get("Tá»•ng Ä‘iá»ƒm") or analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m")
+                current_score = _get_analysis_value(analysis, ["Tổng điểm", "Tong diem"])
                 if isinstance(current_score, (int, float)):
-                    analysis["Tá»•ng Ä‘iá»ƒm"] = min(100, current_score + total_boost)
-                    analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
+                    analysis["Tổng điểm"] = min(100, current_score + total_boost)
+                    analysis["Tong diem"] = analysis["Tổng điểm"]
 
         if cv_text:
             _upsert_industry_fit_detail(
@@ -1299,27 +1445,32 @@ def enrich_candidates(
                 if insight:
                     candidate["embeddingInsights"] = insight
                     details.insert(0, _detail_item(
-                        f"Chuáº©n máº«u {industry.upper()}",
+                        f"Chuẩn mẫu {industry.upper()}",
                         f"{insight['bonusPoints']:.1f}/5",
-                        f"Similarity {insight['averageSimilarity'] * 100:.1f}% => +{insight['bonusPoints']:.1f} diem",
+                        f"Similarity {insight['averageSimilarity'] * 100:.1f}% => +{insight['bonusPoints']:.1f} điểm",
                         "; ".join([f"{item.get('name') or item.get('role') or item.get('id')} {item['similarity'] * 100:.1f}%" for item in insight["topMatches"][:3]]),
-                        f"CV tuong dong thu vien CV {industry.upper()} chuan.",
+                        f"CV tương đồng thư viện CV {industry.upper()} chuẩn.",
                     ))
-                    current_score = analysis.get("Tá»•ng Ä‘iá»ƒm") or analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m")
+                    current_score = _get_analysis_value(analysis, ["Tổng điểm", "Tong diem"])
                     if isinstance(current_score, (int, float)):
-                        analysis["Tá»•ng Ä‘iá»ƒm"] = min(100, current_score + insight["bonusPoints"])
-                        analysis["TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m"] = analysis["Tá»•ng Ä‘iá»ƒm"]
+                        analysis["Tổng điểm"] = min(100, current_score + insight["bonusPoints"])
+                        analysis["Tong diem"] = analysis["Tổng điểm"]
 
-        score = analysis.get("Tá»•ng Ä‘iá»ƒm") or analysis.get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m")
+        score = _get_analysis_value(analysis, ["Tổng điểm", "Tong diem"])
         if isinstance(score, (int, float)):
-            analysis["Háº¡ng"] = "A" if score >= 75 else "B" if score >= 50 else "C"
-            analysis["HÃ¡ÂºÂ¡ng"] = analysis["Háº¡ng"]
+            analysis["Hạng"] = "A" if score >= 75 else "B" if score >= 50 else "C"
+            analysis["Hang"] = analysis["Hạng"]
         candidate["analysis"] = analysis
-        enriched.append(candidate)
+        candidate["stageDecision"] = _build_stage_decision(candidate, hard_filters)
+        enriched.append(_normalize_output_payload(candidate))
 
     enriched.sort(
         key=lambda candidate: (
-            -float((candidate.get("analysis") or {}).get("Tá»•ng Ä‘iá»ƒm") or (candidate.get("analysis") or {}).get("TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m") or -1),
+            -float(
+                (candidate.get("analysis") or {}).get("Tổng điểm")
+                or (candidate.get("analysis") or {}).get("Tong diem")
+                or -1
+            ),
             str(candidate.get("fileName") or ""),
         )
     )

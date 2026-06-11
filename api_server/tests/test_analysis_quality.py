@@ -184,7 +184,7 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertEqual(breakdown["evidence_quality"], "strong")
         self.assertIn("Docker", breakdown["missing_requirements"])
         self.assertIn("Python", breakdown["matched_signals"])
-        self.assertIn("Bo sung bang chung cu the", breakdown["improvement_suggestion"])
+        self.assertIn("Bổ sung bằng chứng cụ thể", breakdown["improvement_suggestion"])
         self.assertIn("Docker", detail["Giai thich"])
         self.assertIn("Python", detail["Dan chung"])
         self.assertIn("=", detail["Cong thuc"])
@@ -231,6 +231,63 @@ class AnalysisQualityTests(unittest.TestCase):
             "Ph\u1ea1m Th\u1ecb Mai Anh",
         )
 
+    def test_candidate_enrichment_normalizes_mojibake_output_payload(self) -> None:
+        def vi(*codepoints: int) -> str:
+            return "".join(chr(codepoint) for codepoint in codepoints)
+
+        source_key = "Ti" + chr(0x00EA) + "u ch" + chr(0x00ED)
+        source_value = "Ph" + chr(0x00F9) + " h" + chr(0x1EE3) + "p JD"
+        source_evidence = (
+            "K" + chr(0x1EF9) + " n" + chr(0x0103) + "ng kh" + chr(0x1EDB) + "p: Java; "
+            "C" + chr(0x00F2) + "n thi" + chr(0x1EBF) + "u: H" + chr(0x00E0) + " N" + chr(0x1ED9) + "i"
+        )
+        bad_payload = {
+            source_key.encode("utf-8").decode("latin-1"): source_value.encode("utf-8").decode("latin-1"),
+            vi(0x0044, 0x1EAB, 0x006E, 0x0020, 0x0063, 0x0068, 0x1EE9, 0x006E, 0x0067)
+            .encode("utf-8")
+            .decode("latin-1"): source_evidence.encode("utf-8").decode("latin-1"),
+        }
+
+        normalized = candidate_enrichment_service._normalize_output_payload(bad_payload)
+
+        self.assertEqual(normalized["Ti\u00eau ch\u00ed"], "Ph\u00f9 h\u1ee3p JD")
+        self.assertEqual(
+            normalized["D\u1eabn ch\u1ee9ng"],
+            "K\u1ef9 n\u0103ng kh\u1edbp: Java; C\u00f2n thi\u1ebfu: H\u00e0 N\u1ed9i",
+        )
+
+    def test_stage_decision_blocks_high_score_when_mandatory_filter_fails(self) -> None:
+        candidate = {
+            "analysis": {"Tong diem": 82},
+            "hardFilterFailureReason": "Địa điểm không khớp yêu cầu Hà Nội.",
+            "locationMatch": False,
+        }
+
+        decision = candidate_enrichment_service._build_stage_decision(
+            candidate,
+            {"autoAdvanceThreshold": 75},
+        )
+
+        self.assertEqual(decision["status"], "hold")
+        self.assertFalse(decision["autoAdvance"])
+        self.assertEqual(decision["recommendedStage"], "Ứng tuyển")
+        self.assertTrue(decision["blockingReasons"])
+
+    def test_stage_decision_marks_strong_candidate_ready_to_advance(self) -> None:
+        candidate = {
+            "analysis": {"Tong diem": 82},
+            "locationMatch": True,
+        }
+
+        decision = candidate_enrichment_service._build_stage_decision(
+            candidate,
+            {"autoAdvanceThreshold": 75},
+        )
+
+        self.assertEqual(decision["status"], "ready_to_advance")
+        self.assertTrue(decision["autoAdvance"])
+        self.assertEqual(decision["recommendedStage"], "Vòng tiếp theo")
+
     def test_enrich_candidates_adds_classifier_backed_industry_fit(self) -> None:
         candidate_enrichment_service.embed_text = lambda text, model=None: [1.0, 0.0]
         candidate_enrichment_service.search_similar_records = (
@@ -273,8 +330,8 @@ class AnalysisQualityTests(unittest.TestCase):
                     },
                     "analysis": {
                         "Tong diem": 50.0,
-                        "Tá»•ng Ä‘iá»ƒm": 50.0,
-                        "Chi tiÃ¡ÂºÂ¿t": [],
+                        "Tổng điểm": 50.0,
+                        "Chi tiết": [],
                     },
                 }
             ],
@@ -289,20 +346,20 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertGreater(candidate["industryFitInsights"]["classifierScore"], 0)
         self.assertGreater(candidate["industryFitInsights"]["finalScore"], 0)
         self.assertIn("embeddingInsights", candidate)
-        self.assertGreater(candidate["analysis"]["Tá»•ng Ä‘iá»ƒm"], 50.0)
+        self.assertGreater(candidate["analysis"]["Tổng điểm"], 50.0)
 
         detail = next(
             (
                 item
-                for item in candidate["analysis"]["Chi tiÃ¡ÂºÂ¿t"]
-                if "Classifier" in candidate_enrichment_service._get_record_value(item, ["Dan chung", "Dáº«n chá»©ng"])
+                for item in candidate["analysis"]["Chi tiết"]
+                if "Classifier" in candidate_enrichment_service._get_record_value(item, ["Dan chung", "Dẫn chứng"])
             ),
             None,
         )
         self.assertIsNotNone(detail)
         assert detail is not None
-        score_text = candidate_enrichment_service._get_record_value(detail, ["Diem", "Äiá»ƒm"])
-        evidence_text = candidate_enrichment_service._get_record_value(detail, ["Dan chung", "Dáº«n chá»©ng"])
+        score_text = candidate_enrichment_service._get_record_value(detail, ["Diem", "Điểm"])
+        evidence_text = candidate_enrichment_service._get_record_value(detail, ["Dan chung", "Dẫn chứng"])
         self.assertIn("/5", score_text)
         self.assertIn("Classifier", evidence_text)
 
@@ -449,6 +506,18 @@ class AnalysisQualityTests(unittest.TestCase):
         candidate = enriched[0]
         self.assertEqual(candidate["jdCvMatchInsights"]["roleKey"], "generic")
         self.assertIsInstance(candidate["jdCvMatchInsights"]["evidenceMatches"], list)
+
+    def test_career_velocity_parser_accepts_vietnamese_accents(self) -> None:
+        velocity = candidate_enrichment_service._analyze_career_velocity(
+            "Vị trí: Trưởng phòng kỹ thuật\n"
+            "Công ty: TechFuture Vietnam\n"
+            "Thời gian: 2020 - hiện tại"
+        )
+
+        self.assertEqual(velocity["peakLevel"], 5)
+        self.assertEqual(velocity["peakTitle"], "Trưởng phòng kỹ thuật")
+        self.assertEqual(velocity["promotionCount"], 0)
+        self.assertEqual(velocity["totalMonths"], 72)
 
 
 if __name__ == "__main__":

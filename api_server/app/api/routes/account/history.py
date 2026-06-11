@@ -64,7 +64,7 @@ def save_analysis_feedback(payload: AnalysisFeedbackRequest, current_user: Authe
     matching = feedback_service.get_feedback_by_id(current_user, feedback_id)
     if matching:
         return matching
-    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Khong the doc lai feedback vua luu.")
+    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Không thể đọc lại feedback vừa lưu.")
 
 
 @router.get("/history/feedback", response_model=list[AnalysisFeedbackResponse])

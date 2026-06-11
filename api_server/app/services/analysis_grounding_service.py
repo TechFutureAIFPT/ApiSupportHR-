@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import re
+import unicodedata
 from typing import Any
 
 from app.repositories.firestore import account_repository as repo
@@ -13,6 +14,7 @@ from app.services.gemini_service import embed_text
 from app.services.local_classifier_service import classify_cv_text
 from app.services.vector_store_service import search_similar_records
 from app.core.config import get_settings
+from app.utils.text_normalization import normalize_display_text
 
 
 SUPPORTED_COLLECTION_KEYS = ("it", "sales", "marketing", "design")
@@ -92,10 +94,24 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip())
 
 
+def _normalize_lookup_key(value: str) -> str:
+    normalized = normalize_display_text(value)
+    decomposed = unicodedata.normalize("NFD", normalized)
+    ascii_text = "".join(char for char in decomposed if unicodedata.category(char) != "Mn")
+    ascii_text = ascii_text.replace("Đ", "D").replace("đ", "d")
+    return re.sub(r"\s+", " ", ascii_text.strip().lower())
+
+
 def _pick_value(record: dict[str, Any], *keys: str) -> Any:
+    alias_set = {_normalize_lookup_key(key) for key in keys}
     for key in keys:
         if key in record and record.get(key) not in (None, ""):
             return record.get(key)
+    for key, value in record.items():
+        if value in (None, ""):
+            continue
+        if _normalize_lookup_key(str(key)) in alias_set:
+            return value
     return None
 
 
@@ -118,8 +134,7 @@ def _extract_grade(candidate: dict[str, Any]) -> str:
         _pick_value(
             analysis,
             "Hạng",
-            "Háº¡ng",
-            "HÃ¡ÂºÂ¡ng",
+            "Hang",
         )
         or "C"
     )
@@ -133,8 +148,6 @@ def _extract_total_score(candidate: dict[str, Any]) -> float:
                 analysis,
                 "Tổng điểm",
                 "Tong diem",
-                "Tá»•ng Ä‘iá»ƒm",
-                "TÃ¡Â»â€¢ng Ã„â€˜iÃ¡Â»Æ’m",
             )
         )
         or 0.0
@@ -143,7 +156,7 @@ def _extract_total_score(candidate: dict[str, Any]) -> float:
 
 def _extract_details(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     analysis = candidate.get("analysis") or {}
-    details = _pick_value(analysis, "Chi tiết", "Chi tiet", "Chi tiáº¿t", "Chi tiÃ¡ÂºÂ¿t")
+    details = _pick_value(analysis, "Chi tiết", "Chi tiet")
     return [item for item in details if isinstance(item, dict)] if isinstance(details, list) else []
 
 
@@ -153,8 +166,6 @@ def _extract_strengths(candidate: dict[str, Any]) -> list[str]:
         analysis,
         "Điểm mạnh CV",
         "Diem manh CV",
-        "Äiá»ƒm máº¡nh CV",
-        "Ã„ÂiÃ¡Â»Æ’m mÃ¡ÂºÂ¡nh CV",
     )
     return [str(item).strip() for item in strengths if str(item).strip()] if isinstance(strengths, list) else []
 
@@ -165,8 +176,6 @@ def _extract_weaknesses(candidate: dict[str, Any]) -> list[str]:
         analysis,
         "Điểm yếu CV",
         "Diem yeu CV",
-        "Äiá»ƒm yáº¿u CV",
-        "Ã„ÂiÃ¡Â»Æ’m yÃ¡ÂºÂ¿u CV",
     )
     return [str(item).strip() for item in weaknesses if str(item).strip()] if isinstance(weaknesses, list) else []
 
@@ -174,13 +183,13 @@ def _extract_weaknesses(candidate: dict[str, Any]) -> list[str]:
 def _extract_jd_fit(details: list[dict[str, Any]]) -> float | None:
     for detail in details:
         criterion = str(
-            _pick_value(detail, "Tiêu chí", "Tieu chi", "TiÃªu chÃ­", "TiÃƒÂªu chÃƒÂ­")
+            _pick_value(detail, "Tiêu chí", "Tieu chi")
             or ""
         ).strip()
         if not criterion:
             continue
         if criterion.lower().startswith("phù hợp jd") or criterion.lower().startswith("phu hop jd"):
-            return _as_float(_pick_value(detail, "Điểm", "Diem", "Äiá»ƒm", "Ã„ÂiÃ¡Â»Æ’m"))
+            return _as_float(_pick_value(detail, "Điểm", "Diem"))
     return None
 
 
@@ -188,12 +197,12 @@ def _summarize_details(details: list[dict[str, Any]], limit_count: int = 2) -> l
     summaries: list[tuple[float, str]] = []
     for detail in details:
         criterion = str(
-            _pick_value(detail, "Tiêu chí", "Tieu chi", "TiÃªu chÃ­", "TiÃƒÂªu chÃƒÂ­")
+            _pick_value(detail, "Tiêu chí", "Tieu chi")
             or ""
         ).strip()
-        score_text = str(_pick_value(detail, "Điểm", "Diem", "Äiá»ƒm", "Ã„ÂiÃ¡Â»Æ’m") or "").strip()
+        score_text = str(_pick_value(detail, "Điểm", "Diem") or "").strip()
         evidence = str(
-            _pick_value(detail, "Dẫn chứng", "Dan chung", "Dáº«n chá»©ng", "DÃ¡ÂºÂ«n chÃ¡Â»Â©ng")
+            _pick_value(detail, "Dẫn chứng", "Dan chung")
             or ""
         ).strip()
         if not criterion:
@@ -201,7 +210,7 @@ def _summarize_details(details: list[dict[str, Any]], limit_count: int = 2) -> l
         score_value = _as_float(score_text) or 0.0
         summary = f"{criterion}: {score_text or '0'}"
         if evidence:
-            summary = f"{summary} | bang chung: {evidence[:180]}"
+            summary = f"{summary} | bằng chứng: {evidence[:180]}"
         summaries.append((score_value, summary))
     summaries.sort(key=lambda item: item[0], reverse=True)
     return [summary for _, summary in summaries[:limit_count]]
@@ -408,16 +417,16 @@ def build_grounding_context(
         if item.get("label")
     ]
     entry_notes = [
-        "Dung local classifier nhu goi y mem, khong xem la ket luan tuyet doi.",
+        "Dùng local classifier như gợi ý mềm, không xem là kết luận tuyệt đối.",
     ]
     if prediction_summary:
         entry_notes.append(f"Classifier hints: {', '.join(prediction_summary)}")
     if collection_keys:
-        entry_notes.append(f"Grounding collections uu tien: {', '.join(collection_keys)}")
+        entry_notes.append(f"Grounding collections ưu tiên: {', '.join(collection_keys)}")
     if exemplars:
         entry_notes.append(
-            "Co exemplar lich su da duoc phan tich. Chi dung de canh chinh cach lap luan, "
-            "khong sao chep may moc."
+            "Có exemplar lịch sử đã được phân tích. Chỉ dùng để canh chỉnh cách lập luận, "
+            "không sao chép máy móc."
         )
 
     few_shot_examples = "\n\n".join(

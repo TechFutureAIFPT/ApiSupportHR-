@@ -126,14 +126,14 @@ def translate_to_vietnamese(text: str) -> str:
 
     settings = get_settings()
     prompt = (
-        "Ban la he thong dich CV chuyen nghiep.\n"
-        "Nhiem vu: dich noi dung CV tieng Anh sang tieng Viet.\n"
-        "Quy tac:\n"
-        "- Giu dung y nghia nghiep vu.\n"
-        "- Giu nguyen ten cong ty, ten cong nghe, ten chung chi, ten san pham.\n"
-        "- Dung tieng Viet tu nhien, ro rang.\n"
-        "- Chi tra ve ban dich, khong them ghi chu.\n\n"
-        "CV goc:\n"
+        "Bạn là hệ thống dịch CV chuyên nghiệp.\n"
+        "Nhiệm vụ: dịch nội dung CV tiếng Anh sang tiếng Việt.\n"
+        "Quy tắc:\n"
+        "- Giữ đúng ý nghĩa nghiệp vụ.\n"
+        "- Giữ nguyên tên công ty, tên công nghệ, tên chứng chỉ, tên sản phẩm.\n"
+        "- Dùng tiếng Việt tự nhiên, rõ ràng, đầy đủ dấu.\n"
+        "- Chỉ trả về bản dịch, không thêm ghi chú.\n\n"
+        "CV gốc:\n"
         f"{cleaned[:12000]}"
     )
     return _clean_text(

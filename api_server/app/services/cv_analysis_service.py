@@ -12,10 +12,11 @@ from app.prompts import render_prompt
 from app.schemas.analysis import StructuredCandidateOutputList
 from app.services.gemini_service import generate_content
 from app.services.role_profile_service import build_role_profile_summary, resolve_role_profile
+from app.utils.text_normalization import normalize_display_text
 
 
-MISSING_DETAIL_EVIDENCE = "AI chua tra ve dan chung cu the cho tieu chi nay."
-MISSING_DETAIL_EXPLANATION = "AI chua tra ve phan tich chi tiet cho tieu chi nay."
+MISSING_DETAIL_EVIDENCE = "AI chưa trả về dẫn chứng cụ thể cho tiêu chí này."
+MISSING_DETAIL_EXPLANATION = "AI chưa trả về phân tích chi tiết cho tiêu chí này."
 TECH_KEYWORDS = (
     "React",
     "Next.js",
@@ -126,7 +127,7 @@ def _build_compact_criteria(weights: Dict[str, Any]) -> str:
 
 
 def _normalize_criterion_name(value: str) -> str:
-    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = unicodedata.normalize("NFD", normalize_display_text(value or ""))
     normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
     normalized = normalized.replace("đ", "d").replace("Đ", "d")
     normalized = re.sub(r"[^a-zA-Z0-9]+", " ", normalized).strip().lower()
@@ -286,7 +287,7 @@ async def get_rag_exemplars(
 
 
 def _normalize_lookup(value: str) -> str:
-    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = unicodedata.normalize("NFD", normalize_display_text(value or ""))
     normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
     normalized = normalized.replace("đ", "d").replace("Đ", "d")
     return re.sub(r"[^a-z0-9+#.]+", " ", normalized.lower()).strip()
@@ -491,7 +492,7 @@ def _education_ratio(cv_text: str) -> tuple[float, str]:
     matched = [term for term in education_terms if term in normalized]
     if matched:
         return min(1.0, 0.55 + len(matched) * 0.15), ", ".join(matched[:4])
-    return 0.2, "Khong tim thay thong tin hoc van ro rang"
+    return 0.2, "Không tìm thấy thông tin học vấn rõ ràng"
 
 
 def _language_ratio(jd_text: str, cv_text: str, criterion_name: str) -> tuple[float, list[str], list[str]]:
@@ -647,11 +648,11 @@ def _fallback_criterion_score(
     cv_text: str,
     hard_filters: Dict[str, Any],
 ) -> tuple[float, str, str, str]:
-    name = str(spec.get("name") or "Tieu chi")
+    name = str(spec.get("name") or "Tiêu chí")
     max_score = float(spec.get("max_score") or 0)
     normalized = str(spec.get("normalized") or _normalize_criterion_name(name))
     if max_score <= 0:
-        return 0.0, "0", "Tieu chi khong co trong so.", "Khong tinh diem cho tieu chi nay."
+        return 0.0, "0", "Tiêu chí không có trọng số.", "Không tính điểm cho tiêu chí này."
 
     if any(term in normalized for term in ("phu hop", "job fit", "jd")):
         metrics = _keyword_metrics(jd_text, cv_text, name)
@@ -671,12 +672,12 @@ def _fallback_criterion_score(
             ][:8]
         else:
             ratio, matched_terms, missing_terms = _text_overlap_ratio(jd_text, cv_text)
-        evidence = f"Khop {matched}/{required} keyword JD" if required else f"Khop noi dung JD/CV {round(ratio * 100)}%"
+        evidence = f"Khớp {matched}/{required} keyword JD" if required else f"Khớp nội dung JD/CV {round(ratio * 100)}%"
         if matched_terms:
             evidence += f": {', '.join(matched_terms)}"
         if missing_terms:
-            evidence += f" | Thieu: {', '.join(missing_terms[:5])}"
-        return max_score * min(1.0, ratio), evidence, "Keyword overlap fallback", "Fallback scoring dung keyword va noi dung JD/CV khi AI generation tam thoi loi."
+            evidence += f" | Thiếu: {', '.join(missing_terms[:5])}"
+        return max_score * min(1.0, ratio), evidence, "Keyword overlap fallback", "Fallback scoring dùng keyword và nội dung JD/CV khi AI generation tạm thời lỗi."
 
     if any(term in normalized for term in ("ky nang", "skill", "technical")):
         metrics = _keyword_metrics(jd_text, cv_text, name)
@@ -688,42 +689,42 @@ def _fallback_criterion_score(
             for item in metrics.get("keywords_list", [])
             if isinstance(item, dict) and item.get("status") == "matched"
         ][:8]
-        evidence = f"Khop {matched}/{required} ky nang yeu cau"
+        evidence = f"Khớp {matched}/{required} kỹ năng yêu cầu"
         if matched_terms:
             evidence += f": {', '.join(matched_terms)}"
-        return max_score * ratio, evidence, "Skill keyword fallback", "Cham diem dua tren ky nang xuat hien trong JD va CV."
+        return max_score * ratio, evidence, "Skill keyword fallback", "Chấm điểm dựa trên kỹ năng xuất hiện trong JD và CV."
 
     if any(term in normalized for term in ("kinh nghiem", "experience", "seniority")):
         cv_years = _extract_year_count(cv_text)
         min_years = _extract_min_year_count(hard_filters, jd_text)
         ratio = min(1.0, cv_years / min_years) if min_years > 0 and cv_years > 0 else (0.65 if cv_years > 0 else 0.25)
-        evidence = f"CV co khoang {_format_score_value(cv_years)} nam; yeu cau {_format_score_value(min_years)} nam."
-        return max_score * ratio, evidence, "Experience fallback", "Cham diem dua tren so nam kinh nghiem tim thay trong CV/JD."
+        evidence = f"CV có khoảng {_format_score_value(cv_years)} năm; yêu cầu {_format_score_value(min_years)} năm."
+        return max_score * ratio, evidence, "Experience fallback", "Chấm điểm dựa trên số năm kinh nghiệm tìm thấy trong CV/JD."
 
     if any(term in normalized for term in ("hoc van", "education", "degree")):
         ratio, evidence = _education_ratio(cv_text)
-        return max_score * ratio, evidence, "Education fallback", "Cham diem dua tren dau hieu bang cap/chung chi trong CV."
+        return max_score * ratio, evidence, "Education fallback", "Chấm điểm dựa trên dấu hiệu bằng cấp/chứng chỉ trong CV."
 
     if any(term in normalized for term in ("thanh tich", "kpi", "achievement", "impact")):
         signal_count = _metric_signal_count(cv_text)
         ratio = min(1.0, signal_count / 3)
-        evidence = f"Tim thay {signal_count} dau hieu KPI/thanh tich trong CV."
-        return max_score * ratio, evidence, "Achievement fallback", "Cham diem dua tren so lieu, KPI va dong tu hanh dong."
+        evidence = f"Tìm thấy {signal_count} dấu hiệu KPI/thành tích trong CV."
+        return max_score * ratio, evidence, "Achievement fallback", "Chấm điểm dựa trên số liệu, KPI và động từ hành động."
 
     if _is_language_criterion(name):
         ratio, matched, missing = _language_ratio(jd_text, cv_text, name)
-        evidence = "Ngon ngu khop: " + (", ".join(matched) if matched else "chua ro")
+        evidence = "Ngôn ngữ khớp: " + (", ".join(matched) if matched else "chưa rõ")
         if missing:
-            evidence += f" | Thieu: {', '.join(missing)}"
-        return max_score * ratio, evidence, "Language fallback", "Cham diem dua tren ngon ngu/chung chi tim thay trong CV."
+            evidence += f" | Thiếu: {', '.join(missing)}"
+        return max_score * ratio, evidence, "Language fallback", "Chấm điểm dựa trên ngôn ngữ/chứng chỉ tìm thấy trong CV."
 
     ratio, matched_terms, missing_terms = _text_overlap_ratio(jd_text, cv_text)
-    evidence = f"Khop text JD/CV {round(ratio * 100)}%"
+    evidence = f"Khớp text JD/CV {round(ratio * 100)}%"
     if matched_terms:
         evidence += f": {', '.join(matched_terms[:6])}"
     if missing_terms:
-        evidence += f" | Thieu: {', '.join(missing_terms[:4])}"
-    return max_score * min(1.0, max(0.25, ratio)), evidence, "Generic fallback", "Cham diem tam thoi dua tren do khop noi dung."
+        evidence += f" | Thiếu: {', '.join(missing_terms[:4])}"
+    return max_score * min(1.0, max(0.25, ratio)), evidence, "Generic fallback", "Chấm điểm tạm thời dựa trên độ khớp nội dung."
 
 
 def build_rule_based_fallback_candidates(
@@ -849,7 +850,7 @@ def _build_deductions(
             remaining = round(remaining - lost, 1)
             deductions.append(
                 {
-                    "reason": f"Thieu tu khoa cot loi trong JD: {keyword}",
+                    "reason": f"Thiếu từ khóa cốt lõi trong JD: {keyword}",
                     "points_lost": lost,
                 }
             )
@@ -858,14 +859,14 @@ def _build_deductions(
         if remaining > 0:
             deductions.append(
                 {
-                    "reason": explanation or "Chua du bang chung de dat diem toi da.",
+                    "reason": explanation or "Chưa đủ bằng chứng để đạt điểm tối đa.",
                     "points_lost": round(remaining, 1),
                 }
             )
         return deductions
     return [
         {
-            "reason": explanation or "Chua du bang chung de dat diem toi da.",
+            "reason": explanation or "Chưa đủ bằng chứng để đạt điểm tối đa.",
             "points_lost": round(points_lost, 1),
         }
     ]
@@ -995,13 +996,13 @@ def _build_matched_signals(
     family = _criterion_family(criterion_name)
     if evidence_highlights:
         if family == "experience":
-            return ["Co mo ta kinh nghiem lien quan trong CV."]
+            return ["Có mô tả kinh nghiệm liên quan trong CV."]
         if family == "achievement":
-            return ["Co bang chung ve ket qua/anh huong trong CV."]
+            return ["Có bằng chứng về kết quả/ảnh hưởng trong CV."]
         if family == "education":
-            return ["Co thong tin hoc van/chung chi lien quan."]
+            return ["Có thông tin học vấn/chứng chỉ liên quan."]
         if family == "language":
-            return ["Co thong tin ve trinh do ngon ngu."]
+            return ["Có thông tin về trình độ ngôn ngữ."]
         return [evidence_highlights[0]]
     return []
 
@@ -1035,14 +1036,14 @@ def _build_missing_requirements(
     if not missing and evidence_quality in {"weak", "missing"}:
         family = _criterion_family(criterion_name)
         fallback_map = {
-            "fit": "Chua thay bang chung so khop voi vai tro/JD.",
-            "skill": "Chua thay ky nang bat buoc duoc neu ro.",
-            "experience": "Chua thay so nam hoac scope kinh nghiem ro rang.",
-            "education": "Chua thay hoc van/chung chi dung yeu cau.",
-            "language": "Chua thay muc do ngon ngu duoc xac nhan.",
-            "achievement": "Chua thay ket qua dinh luong de chung minh tac dong.",
-            "behavior": "Chua thay bang chung cho tac phong/phu hop van hoa.",
-            "general": "Chua thay bang chung ro rang de dat diem cao.",
+            "fit": "Chưa thấy bằng chứng so khớp với vai trò/JD.",
+            "skill": "Chưa thấy kỹ năng bắt buộc được nêu rõ.",
+            "experience": "Chưa thấy số năm hoặc scope kinh nghiệm rõ ràng.",
+            "education": "Chưa thấy học vấn/chứng chỉ đúng yêu cầu.",
+            "language": "Chưa thấy mức độ ngôn ngữ được xác nhận.",
+            "achievement": "Chưa thấy kết quả định lượng để chứng minh tác động.",
+            "behavior": "Chưa thấy bằng chứng cho tác phong/phù hợp văn hóa.",
+            "general": "Chưa thấy bằng chứng rõ ràng để đạt điểm cao.",
         }
         missing.append(fallback_map.get(family, fallback_map["general"]))
     return missing
@@ -1112,13 +1113,13 @@ def _build_evidence_summary(
     if evidence_highlights:
         return " | ".join(evidence_highlights[:3])
     if matched_signals:
-        return f"Bang chung chinh: {', '.join(matched_signals[:3])}."
+        return f"Bằng chứng chính: {', '.join(matched_signals[:3])}."
     if missing_requirements:
         family = _criterion_family(criterion_name)
         if family == "skill":
-            return f"Chua thay bang chung cho: {', '.join(missing_requirements[:3])}."
-        return f"Khong tim thay bang chung ro rang; con thieu {', '.join(missing_requirements[:2])}."
-    return "Khong tim thay bang chung ro rang trong CV hien tai."
+            return f"Chưa thấy bằng chứng cho: {', '.join(missing_requirements[:3])}."
+        return f"Không tìm thấy bằng chứng rõ ràng; còn thiếu {', '.join(missing_requirements[:2])}."
+    return "Không tìm thấy bằng chứng rõ ràng trong CV hiện tại."
 
 
 def _build_detail_explanation(
@@ -1132,21 +1133,21 @@ def _build_detail_explanation(
     missing_text = ", ".join(missing_requirements[:3])
     if verdict == "strong":
         if matched_text:
-            return f"Tieu chi {criterion_name} dat tot nho da the hien ro {matched_text}."
-        return f"Tieu chi {criterion_name} dat tot va co bang chung ro trong CV."
+            return f"Tiêu chí {criterion_name} đạt tốt nhờ đã thể hiện rõ {matched_text}."
+        return f"Tiêu chí {criterion_name} đạt tốt và có bằng chứng rõ trong CV."
     if verdict == "partial":
         if matched_text and missing_text:
-            return f"Tieu chi {criterion_name} dat mot phan: co {matched_text}, nhung con thieu {missing_text}."
+            return f"Tiêu chí {criterion_name} đạt một phần: có {matched_text}, nhưng còn thiếu {missing_text}."
         if matched_text:
-            return f"Tieu chi {criterion_name} dat mot phan dua tren {matched_text}."
-        return f"Tieu chi {criterion_name} dat mot phan nhung bang chung con mong."
+            return f"Tiêu chí {criterion_name} đạt một phần dựa trên {matched_text}."
+        return f"Tiêu chí {criterion_name} đạt một phần nhưng bằng chứng còn mỏng."
     if verdict == "weak":
         if missing_text:
-            return f"Tieu chi {criterion_name} dat thap vi con thieu {missing_text}."
-        return f"Tieu chi {criterion_name} dat thap do bang chung trong CV chua du ro."
+            return f"Tiêu chí {criterion_name} đạt thấp vì còn thiếu {missing_text}."
+        return f"Tiêu chí {criterion_name} đạt thấp do bằng chứng trong CV chưa đủ rõ."
     if missing_text:
-        return f"Tieu chi {criterion_name} chua dat vi khong tim thay bang chung cho {missing_text}."
-    return f"Tieu chi {criterion_name} chua dat vi khong tim thay bang chung ro rang trong CV."
+        return f"Tiêu chí {criterion_name} chưa đạt vì không tìm thấy bằng chứng cho {missing_text}."
+    return f"Tiêu chí {criterion_name} chưa đạt vì không tìm thấy bằng chứng rõ ràng trong CV."
 
 
 def _build_improvement_suggestion(
@@ -1155,22 +1156,22 @@ def _build_improvement_suggestion(
     evidence_quality: str,
 ) -> str:
     if missing_requirements:
-        return f"Bo sung bang chung cu the cho: {', '.join(missing_requirements[:3])}."
+        return f"Bổ sung bằng chứng cụ thể cho: {', '.join(missing_requirements[:3])}."
 
     family = _criterion_family(criterion_name)
     family_defaults = {
-        "fit": "Neu ro du an/ky nang gan truc tiep voi JD va ket qua da dat duoc.",
-        "skill": "Bo sung cong nghe, framework, tool va pham vi da su dung.",
-        "experience": "Neu ro so nam kinh nghiem, scope du an va vai tro dam nhiem.",
-        "education": "Bo sung bang cap, chung chi hoac mon hoc lien quan.",
-        "language": "Neu ro trinh do, chung chi va tinh huong da su dung ngon ngu.",
-        "achievement": "Them KPI, metric, doanh thu, toc do tang truong hoac impact dinh luong.",
-        "behavior": "Bo sung vi du ve ownership, teamwork, communication hoac leadership.",
-        "general": "Bo sung bang chung cu the va ket qua do luong duoc cho tieu chi nay.",
+        "fit": "Nêu rõ dự án/kỹ năng gắn trực tiếp với JD và kết quả đã đạt được.",
+        "skill": "Bổ sung công nghệ, framework, tool và phạm vi đã sử dụng.",
+        "experience": "Nêu rõ số năm kinh nghiệm, scope dự án và vai trò đảm nhiệm.",
+        "education": "Bổ sung bằng cấp, chứng chỉ hoặc môn học liên quan.",
+        "language": "Nêu rõ trình độ, chứng chỉ và tình huống đã sử dụng ngôn ngữ.",
+        "achievement": "Thêm KPI, metric, doanh thu, tốc độ tăng trưởng hoặc impact định lượng.",
+        "behavior": "Bổ sung ví dụ về ownership, teamwork, communication hoặc leadership.",
+        "general": "Bổ sung bằng chứng cụ thể và kết quả đo lường được cho tiêu chí này.",
     }
     if evidence_quality in {"weak", "missing"}:
         return family_defaults.get(family, family_defaults["general"])
-    return "Duy tri bang chung cu the va neu ro hon tac dong thuc te de giu diem cao."
+    return "Duy trì bằng chứng cụ thể và nêu rõ hơn tác động thực tế để giữ điểm cao."
 
 def _is_weak_formula(value: str) -> bool:
     normalized = _normalize_lookup(value)
@@ -1181,11 +1182,11 @@ def _is_weak_formula(value: str) -> bool:
 
 def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_text: str) -> dict[str, Any]:
     existing = _as_advanced_dict(detail.get("advancedBreakdown") or detail.get("advanced_breakdown"))
-    criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­", "Criterion")
-    score_text = _get_detail_value(detail, "Diem", "Điểm", "Äiá»ƒm", "Score")
-    formula = _get_detail_value(detail, "Cong thuc", "Công thức", "CÃ´ng thá»©c", "Formula")
-    evidence = _get_detail_value(detail, "Dan chung", "Dẫn chứng", "Dáº«n chá»©ng", "Evidence")
-    explanation = _get_detail_value(detail, "Giai thich", "Giải thích", "Giáº£i thÃ­ch", "Explanation")
+    criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "Criterion")
+    score_text = _get_detail_value(detail, "Diem", "Điểm", "Score")
+    formula = _get_detail_value(detail, "Cong thuc", "Công thức", "Formula")
+    evidence = _get_detail_value(detail, "Dan chung", "Dẫn chứng", "Evidence")
+    explanation = _get_detail_value(detail, "Giai thich", "Giải thích", "Explanation")
     raw_score, max_score = _parse_score_pair(score_text, formula)
     max_score = max(max_score, raw_score)
     points_lost = max(0.0, max_score - raw_score)
@@ -1208,12 +1209,12 @@ def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_t
             mathematical_formula = formula
         elif points_lost:
             mathematical_formula = (
-                f"{_format_score_value(max_score)}d (toi da) - "
-                f"{_format_score_value(points_lost)}d (cac diem chua dat) = "
-                f"{_format_score_value(raw_score)}d"
+                f"{_format_score_value(max_score)}đ (tối đa) - "
+                f"{_format_score_value(points_lost)}đ (các điểm chưa đạt) = "
+                f"{_format_score_value(raw_score)}đ"
             )
         else:
-            mathematical_formula = f"{_format_score_value(max_score)}d (toi da) - 0d = {_format_score_value(raw_score)}d"
+            mathematical_formula = f"{_format_score_value(max_score)}đ (tối đa) - 0đ = {_format_score_value(raw_score)}đ"
 
     deductions = _as_deductions(existing.get("deductions"))
     if not deductions:
@@ -1285,21 +1286,21 @@ def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_t
 
 def _set_detail_field(detail: dict[str, Any], field: str, value: str) -> None:
     aliases = {
-        "Tieu chi": ("Tieu chi", "Tiêu chí", "TiÃªu chÃ­"),
-        "Diem": ("Diem", "Điểm", "Äiá»ƒm"),
-        "Cong thuc": ("Cong thuc", "Công thức", "CÃ´ng thá»©c"),
-        "Dan chung": ("Dan chung", "Dẫn chứng", "Dáº«n chá»©ng"),
-        "Giai thich": ("Giai thich", "Giải thích", "Giáº£i thÃ­ch"),
+        "Tieu chi": ("Tieu chi", "Tiêu chí"),
+        "Diem": ("Diem", "Điểm"),
+        "Cong thuc": ("Cong thuc", "Công thức"),
+        "Dan chung": ("Dan chung", "Dẫn chứng"),
+        "Giai thich": ("Giai thich", "Giải thích"),
     }
     for key in aliases.get(field, (field,)):
         detail[key] = value
 
 
 def _repair_detail_content(detail: dict[str, Any], breakdown: dict[str, Any]) -> None:
-    criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­", "Criterion")
-    formula = _get_detail_value(detail, "Cong thuc", "Công thức", "CÃ´ng thá»©c", "Formula")
-    evidence = _get_detail_value(detail, "Dan chung", "Dẫn chứng", "Dáº«n chá»©ng", "Evidence")
-    explanation = _get_detail_value(detail, "Giai thich", "Giải thích", "Giáº£i thÃ­ch", "Explanation")
+    criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "Criterion")
+    formula = _get_detail_value(detail, "Cong thuc", "Công thức", "Formula")
+    evidence = _get_detail_value(detail, "Dan chung", "Dẫn chứng", "Evidence")
+    explanation = _get_detail_value(detail, "Giai thich", "Giải thích", "Explanation")
     matched_signals = _as_string_list(breakdown.get("matched_signals"))
     missing_requirements = _as_string_list(breakdown.get("missing_requirements"))
     evidence_highlights = _as_string_list(breakdown.get("evidence_highlights"))
@@ -1325,13 +1326,13 @@ def _repair_detail_content(detail: dict[str, Any], breakdown: dict[str, Any]) ->
 
 
 def _refresh_candidate_summary(analysis: dict[str, Any]) -> None:
-    raw_details = analysis.get("Chi tiet") or analysis.get("Chi tiết") or analysis.get("Chi tiáº¿t") or []
+    raw_details = _get_detail_value(analysis, "Chi tiet", "Chi tiết")
     details = [item for item in raw_details if isinstance(item, dict)] if isinstance(raw_details, list) else []
     strengths: list[str] = []
     weaknesses: list[str] = []
 
     for detail in details:
-        criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­")
+        criterion_name = _get_detail_value(detail, "Tieu chi", "Tiêu chí")
         breakdown = _as_advanced_dict(detail.get("advancedBreakdown") or detail.get("advanced_breakdown"))
         verdict = str(breakdown.get("verdict") or "missing")
         matched_signals = _as_string_list(breakdown.get("matched_signals"))
@@ -1355,12 +1356,12 @@ def _refresh_candidate_summary(analysis: dict[str, Any]) -> None:
             details,
             key=lambda item: _score_ratio(
                 *_parse_score_pair(
-                    _get_detail_value(item, "Diem", "Điểm", "Äiá»ƒm"),
-                    _get_detail_value(item, "Cong thuc", "Công thức", "CÃ´ng thá»©c"),
+                    _get_detail_value(item, "Diem", "Điểm"),
+                    _get_detail_value(item, "Cong thuc", "Công thức"),
                 )
             ),
         )
-        best_name = _get_detail_value(best_detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­")
+        best_name = _get_detail_value(best_detail, "Tieu chi", "Tiêu chí")
         if best_name:
             strengths.append(best_name)
 
@@ -1369,12 +1370,12 @@ def _refresh_candidate_summary(analysis: dict[str, Any]) -> None:
             details,
             key=lambda item: _score_ratio(
                 *_parse_score_pair(
-                    _get_detail_value(item, "Diem", "Điểm", "Äiá»ƒm"),
-                    _get_detail_value(item, "Cong thuc", "Công thức", "CÃ´ng thá»©c"),
+                    _get_detail_value(item, "Diem", "Điểm"),
+                    _get_detail_value(item, "Cong thuc", "Công thức"),
                 )
             ),
         )
-        weakest_name = _get_detail_value(weakest_detail, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­")
+        weakest_name = _get_detail_value(weakest_detail, "Tieu chi", "Tiêu chí")
         if weakest_name:
             weaknesses.append(weakest_name)
 
@@ -1408,11 +1409,17 @@ def _normalize_core_score(score: str, max_score: float) -> str:
     return f"0/{_format_score_value(max_score)}"
 
 
-def _get_detail_value(record: Dict[str, Any], *keys: str) -> str:
+def _get_detail_value(record: Dict[str, Any], *keys: str) -> Any:
+    alias_set = {_normalize_lookup(key) for key in keys}
     for key in keys:
         value = record.get(key)
         if value is not None and str(value).strip():
-            return str(value).strip()
+            return value if isinstance(value, list) else str(value).strip()
+    for key, value in record.items():
+        if value is None or str(value).strip() == "":
+            continue
+        if _normalize_lookup(str(key)) in alias_set:
+            return value if isinstance(value, list) else str(value).strip()
     return ""
 
 
@@ -1422,13 +1429,13 @@ def _ensure_analysis_shape(candidate: Dict[str, Any], criterion_specs: List[Dict
         analysis = {}
         candidate["analysis"] = analysis
 
-    raw_details = analysis.get("Chi tiet") or analysis.get("Chi tiết") or analysis.get("Chi tiáº¿t") or []
+    raw_details = _get_detail_value(analysis, "Chi tiet", "Chi tiết")
     details = [item for item in raw_details if isinstance(item, dict)] if isinstance(raw_details, list) else []
 
     matched_details: Dict[str, Dict[str, Any]] = {}
     extras: List[Dict[str, Any]] = []
     for item in details:
-        criterion_name = _get_detail_value(item, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­")
+        criterion_name = _get_detail_value(item, "Tieu chi", "Tiêu chí")
         normalized_name = _normalize_criterion_name(criterion_name)
         if normalized_name and normalized_name not in matched_details:
             matched_details[normalized_name] = item
@@ -1441,12 +1448,12 @@ def _ensure_analysis_shape(candidate: Dict[str, Any], criterion_specs: List[Dict
         existing = matched_details.get(spec["normalized"])
         if existing:
             score = _normalize_core_score(
-                _get_detail_value(existing, "Diem", "Điểm", "Äiá»ƒm"),
+                _get_detail_value(existing, "Diem", "Điểm"),
                 float(spec["max_score"] or 0),
             )
-            formula = _get_detail_value(existing, "Cong thuc", "Công thức", "CÃ´ng thá»©c")
-            evidence = _get_detail_value(existing, "Dan chung", "Dẫn chứng", "Dáº«n chá»©ng")
-            explanation = _get_detail_value(existing, "Giai thich", "Giải thích", "Giáº£i thÃ­ch")
+            formula = _get_detail_value(existing, "Cong thuc", "Công thức")
+            evidence = _get_detail_value(existing, "Dan chung", "Dẫn chứng")
+            explanation = _get_detail_value(existing, "Giai thich", "Giải thích")
             normalized_details.append(
                 _detail_item(
                     spec["name"],
@@ -1461,29 +1468,28 @@ def _ensure_analysis_shape(candidate: Dict[str, Any], criterion_specs: List[Dict
                 _detail_item(
                     spec["name"],
                     f"0/{_format_score_value(spec['max_score'])}" if spec["max_score"] > 0 else "0",
-                    f"Tieu chi '{spec['name']}' co trong cau hinh backend nhung AI chua tra ve chi tiet.",
+                    f"Tiêu chí '{spec['name']}' có trong cấu hình backend nhưng AI chưa trả về chi tiết.",
                     MISSING_DETAIL_EVIDENCE,
                     MISSING_DETAIL_EXPLANATION,
                 )
             )
 
     for item in details + extras:
-        criterion_name = _get_detail_value(item, "Tieu chi", "Tiêu chí", "TiÃªu chÃ­")
+        criterion_name = _get_detail_value(item, "Tieu chi", "Tiêu chí")
         if _normalize_criterion_name(criterion_name) in matched_names:
             continue
         normalized_details.append(
             _detail_item(
-                criterion_name or "Tieu chi bo sung",
-                _get_detail_value(item, "Diem", "Điểm", "Äiá»ƒm"),
-                _get_detail_value(item, "Cong thuc", "Công thức", "CÃ´ng thá»©c"),
-                _get_detail_value(item, "Dan chung", "Dẫn chứng", "Dáº«n chá»©ng"),
-                _get_detail_value(item, "Giai thich", "Giải thích", "Giáº£i thÃ­ch"),
+                criterion_name or "Tiêu chí bổ sung",
+                _get_detail_value(item, "Diem", "Điểm"),
+                _get_detail_value(item, "Cong thuc", "Công thức"),
+                _get_detail_value(item, "Dan chung", "Dẫn chứng"),
+                _get_detail_value(item, "Giai thich", "Giải thích"),
             )
         )
 
     analysis["Chi tiet"] = normalized_details
     analysis["Chi tiết"] = normalized_details
-    analysis["Chi tiáº¿t"] = normalized_details
     return candidate
 
 
@@ -1525,14 +1531,13 @@ def attach_advanced_score_breakdowns(
         analysis = candidate.get("analysis")
         if not isinstance(analysis, dict):
             continue
-        raw_details = analysis.get("Chi tiet") or analysis.get("Chi tiết") or analysis.get("Chi tiáº¿t") or []
+        raw_details = _get_detail_value(analysis, "Chi tiet", "Chi tiết")
         details = [item for item in raw_details if isinstance(item, dict)] if isinstance(raw_details, list) else []
         for detail in details:
             detail["advancedBreakdown"] = build_advanced_score_breakdown(detail, jd_text=jd_text, cv_text=cv_text)
             _repair_detail_content(detail, detail["advancedBreakdown"])
         analysis["Chi tiet"] = details
         analysis["Chi tiết"] = details
-        analysis["Chi tiáº¿t"] = details
         _refresh_candidate_summary(analysis)
     return candidates
 
@@ -1571,11 +1576,11 @@ def _create_analysis_prompt(
         context={
             "compact_jd": compact_jd,
             "compact_weights": compact_weights,
-            "location": hard_filters.get("location") or "Linh hoat",
-            "min_exp": hard_filters.get("minExp") or "Khong yeu cau",
-            "seniority": hard_filters.get("seniority") or "Linh hoat",
+            "location": hard_filters.get("location") or "Linh hoạt",
+            "min_exp": hard_filters.get("minExp") or "Không yêu cầu",
+            "seniority": hard_filters.get("seniority") or "Linh hoạt",
             "role_profile_summary": build_role_profile_summary(role_profile),
-            "context_notes": context_notes or "Khong co boi canh bo sung.",
+            "context_notes": context_notes or "Không có bối cảnh bổ sung.",
         },
     )
 
