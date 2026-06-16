@@ -5,6 +5,7 @@ import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import get_settings
+from app.services.candidate_screening_service import build_candidate_profile, build_screening_summary
 from app.services.gemini_service import embed_text
 from app.services.role_profile_service import get_role_requirements, is_generic_role, resolve_role_profile
 from app.services.vector_store_service import search_similar_records
@@ -242,12 +243,21 @@ def _build_stage_decision(candidate: Dict[str, Any], hard_filters: Dict[str, Any
     hard_failure = str(candidate.get("hardFilterFailureReason") or "").strip()
     location_match = candidate.get("locationMatch")
     threshold = float(hard_filters.get("autoAdvanceThreshold") or hard_filters.get("minPassScore") or 75)
+    screening_summary = candidate.get("screeningSummary") if isinstance(candidate.get("screeningSummary"), dict) else {}
 
     blocking_reasons: List[str] = []
     if hard_failure:
         blocking_reasons.append(hard_failure)
     if location_match is False:
         blocking_reasons.append("Không đạt yêu cầu địa điểm bắt buộc.")
+    for item in screening_summary.values():
+        if not isinstance(item, dict):
+            continue
+        if item.get("mandatory") and str(item.get("status") or "").lower() == "fail":
+            reason = str(item.get("reason") or "").strip()
+            if reason:
+                blocking_reasons.append(reason)
+    blocking_reasons = list(dict.fromkeys(blocking_reasons))
 
     if blocking_reasons:
         return {
@@ -259,6 +269,28 @@ def _build_stage_decision(candidate: Dict[str, Any], hard_filters: Dict[str, Any
             "scoreThreshold": threshold,
             "reason": "Ứng viên có điểm đánh giá nhưng chưa đạt tiêu chí bắt buộc.",
             "blockingReasons": blocking_reasons,
+        }
+
+    mandatory_reviews: List[str] = []
+    for item in screening_summary.values():
+        if not isinstance(item, dict):
+            continue
+        if item.get("mandatory") and str(item.get("status") or "").lower() == "review":
+            reason = str(item.get("reason") or "").strip()
+            if reason:
+                mandatory_reviews.append(reason)
+    mandatory_reviews = list(dict.fromkeys(mandatory_reviews))
+
+    if mandatory_reviews:
+        return {
+            "status": "review",
+            "label": "Cần HR rà soát",
+            "autoAdvance": False,
+            "currentStage": "Ứng tuyển",
+            "recommendedStage": "Rà soát thủ công",
+            "scoreThreshold": threshold,
+            "reason": "Thiếu hoặc chưa đủ dữ liệu ở tiêu chí bắt buộc, cần HR kiểm tra thủ công.",
+            "blockingReasons": mandatory_reviews,
         }
 
     if score >= threshold:
@@ -1342,6 +1374,24 @@ def enrich_candidates(
         analysis = candidate.get("analysis") or {}
         details = _get_analysis_details(analysis)
         _sync_analysis_detail_aliases(analysis, details)
+        if cv_text:
+            candidate_profile = build_candidate_profile(candidate, cv_text, jd_text, hard_filters)
+            screening_summary, auto_reject_reasons = build_screening_summary(candidate_profile, jd_text, hard_filters)
+            candidate["candidateProfile"] = candidate_profile
+            candidate["screeningSummary"] = screening_summary
+            if auto_reject_reasons:
+                candidate["autoRejectReasons"] = auto_reject_reasons
+                candidate["hardFilterFailureReason"] = auto_reject_reasons[0]
+            location_factor = screening_summary.get("location") if isinstance(screening_summary.get("location"), dict) else {}
+            if location_factor:
+                observed_location = str(location_factor.get("observed") or "").strip()
+                if observed_location:
+                    candidate["detectedLocation"] = observed_location
+                    candidate["detectedLocationSource"] = "screening_profile"
+                if location_factor.get("status") == "pass":
+                    candidate["locationMatch"] = True
+                elif location_factor.get("status") == "fail":
+                    candidate["locationMatch"] = False
 
         cv_vector: List[float] | None = None
         if cv_text:

@@ -120,6 +120,7 @@ def _install_dependency_stubs() -> None:
 _install_dependency_stubs()
 cv_analysis_service = importlib.import_module("app.services.cv_analysis_service")
 candidate_enrichment_service = importlib.import_module("app.services.candidate_enrichment_service")
+candidate_screening_service = importlib.import_module("app.services.candidate_screening_service")
 role_profile_service = importlib.import_module("app.services.role_profile_service")
 
 
@@ -287,6 +288,99 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertEqual(decision["status"], "ready_to_advance")
         self.assertTrue(decision["autoAdvance"])
         self.assertEqual(decision["recommendedStage"], "Vòng tiếp theo")
+
+    def test_stage_decision_reviews_when_mandatory_screening_lacks_data(self) -> None:
+        candidate = {
+            "analysis": {"Tong diem": 88},
+            "screeningSummary": {
+                "age": {
+                    "status": "review",
+                    "mandatory": True,
+                    "reason": "Thiếu dữ liệu tuổi để đối chiếu.",
+                }
+            },
+        }
+
+        decision = candidate_enrichment_service._build_stage_decision(
+            candidate,
+            {"autoAdvanceThreshold": 75},
+        )
+
+        self.assertEqual(decision["status"], "review")
+        self.assertFalse(decision["autoAdvance"])
+        self.assertIn("Thiếu dữ liệu tuổi", decision["blockingReasons"][0])
+
+    def test_candidate_profile_extracts_age_education_and_timeline(self) -> None:
+        cv_text = """
+        Họ tên: Nguyễn Văn A
+        Năm sinh: 1998
+        Địa chỉ: Hà Nội
+        Cử nhân Quản trị kinh doanh - Đại học Kinh tế Quốc dân
+        Sales Executive | 2021-2023 | quản lý khách hàng doanh nghiệp
+        Account Manager | 03/2023 - Present | phát triển kinh doanh và chăm sóc khách hàng
+        """
+
+        profile = candidate_screening_service.build_candidate_profile(
+            {},
+            cv_text,
+            "Tuyển Sales Executive tại Hà Nội, ưu tiên ngành quản trị kinh doanh.",
+            {"industry": "Sales"},
+        )
+
+        self.assertEqual(profile["birthYear"], 1998)
+        self.assertEqual(profile["currentLocation"], "Ha Noi")
+        self.assertEqual(profile["educationLevel"], "Bachelor")
+        self.assertIn("business-administration", profile["educationMajors"])
+        self.assertGreaterEqual(profile["totalExperienceMonths"], 36)
+        self.assertTrue(profile["workPeriods"])
+
+    def test_screening_summary_holds_when_location_or_major_mismatch(self) -> None:
+        profile = {
+            "age": 28,
+            "currentLocation": "Thanh pho Ho Chi Minh",
+            "educationLevel": "Bachelor",
+            "educationMajors": ["information-technology"],
+            "inferredKnowledgeAreas": ["software development"],
+            "totalExperienceMonths": 48,
+            "relevantExperienceMonths": 48,
+            "experienceDomains": ["tech"],
+            "workPeriods": [],
+            "extractionWarnings": [],
+        }
+
+        summary, auto_reject_reasons = candidate_screening_service.build_screening_summary(
+            profile,
+            "Tuyển nhân viên kinh doanh tại Hà Nội.",
+            {
+                "location": "Ha Noi",
+                "locationMandatory": True,
+                "majorGroups": ["business-administration"],
+                "majorMandatory": True,
+                "education": "Bachelor",
+                "educationMandatory": True,
+                "minExp": "3",
+                "minExpMandatory": True,
+            },
+        )
+
+        self.assertEqual(summary["location"]["status"], "fail")
+        self.assertEqual(summary["major"]["status"], "fail")
+        self.assertTrue(auto_reject_reasons)
+
+    def test_extract_hard_filters_supports_age_and_major_groups(self) -> None:
+        workflow_service = importlib.import_module("app.services.workflow_service")
+        original_generate_content = workflow_service.generate_content
+        workflow_service.generate_content = lambda *args, **kwargs: '{"education":"Bachelor","location":"Ha Noi","age":"22-30 tuổi","majorGroups":["Quản trị kinh doanh","Kinh tế"]}'
+        try:
+            filters = workflow_service.extract_hard_filters(
+                "Yêu cầu ứng viên 22-30 tuổi, tốt nghiệp đại học khối kinh tế hoặc quản trị kinh doanh."
+            )
+        finally:
+            workflow_service.generate_content = original_generate_content
+
+        self.assertEqual(filters["education"], "Bachelor")
+        self.assertEqual(filters["age"]["min"], 22)
+        self.assertIn("business-administration", filters["majorGroups"])
 
     def test_enrich_candidates_adds_classifier_backed_industry_fit(self) -> None:
         candidate_enrichment_service.embed_text = lambda text, model=None: [1.0, 0.0]

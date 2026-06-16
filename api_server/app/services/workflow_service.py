@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 from app.core.config import get_settings
 from app.prompts import render_prompt
+from app.services.candidate_screening_service import extract_age_range, extract_major_groups_from_text, normalize_major_groups
 from app.services.gemini_service import generate_content
 from app.utils.text_normalization import normalize_display_text
 
@@ -167,7 +168,7 @@ def _convert_language_level_to_cefr(text: str) -> str | None:
     return None
 
 
-def extract_hard_filters(jd_text: str) -> Dict[str, str]:
+def extract_hard_filters(jd_text: str) -> Dict[str, Any]:
     prompt = render_prompt(
         "workflow/extract_hard_filters",
         context={"jd_text": jd_text[:3000]},
@@ -182,7 +183,7 @@ def extract_hard_filters(jd_text: str) -> Dict[str, str]:
     if not isinstance(data, dict):
         return {}
 
-    validated: Dict[str, str] = {}
+    validated: Dict[str, Any] = {}
 
     location = str(data.get("location", "")).strip()
     normalized_location = _normalize_location_text(location)
@@ -237,6 +238,16 @@ def extract_hard_filters(jd_text: str) -> Dict[str, str]:
         validated["education"] = education
     elif education in education_map:
         validated["education"] = education_map[education]
+
+    age_range = data.get("age") if isinstance(data.get("age"), dict) else extract_age_range(str(data.get("age", "") or jd_text))
+    if isinstance(age_range, dict) and (age_range.get("min") is not None or age_range.get("max") is not None):
+        validated["age"] = {key: int(value) for key, value in age_range.items() if value is not None}
+
+    major_groups = normalize_major_groups(data.get("majorGroups") or data.get("majors") or [])
+    if not major_groups:
+        major_groups = extract_major_groups_from_text(jd_text)
+    if major_groups:
+        validated["majorGroups"] = major_groups
 
     language = str(data.get("language", "")).strip()
     language_map = {

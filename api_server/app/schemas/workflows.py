@@ -32,7 +32,7 @@ class JdHardFiltersRequest(BaseModel):
 
 
 class JdHardFiltersResponse(SavedRecordMixin):
-    filters: Dict[str, str]
+    filters: Dict[str, Any]
 
 
 class InterviewQuestionsRequest(BaseModel):
