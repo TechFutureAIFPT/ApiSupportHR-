@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.config import get_settings
 from app.services.candidate_screening_service import build_candidate_profile, build_screening_summary
 from app.services.gemini_service import embed_text
+from app.services.hr_summary_service import build_hr_summary
 from app.services.role_profile_service import get_role_requirements, is_generic_role, resolve_role_profile
 from app.services.vector_store_service import search_similar_records
 
@@ -1392,6 +1393,14 @@ def enrich_candidates(
                     candidate["locationMatch"] = True
                 elif location_factor.get("status") == "fail":
                     candidate["locationMatch"] = False
+            candidate["hrSummary"] = build_hr_summary(
+                candidate,
+                cv_text,
+                jd_text,
+                hard_filters,
+                profile=candidate_profile,
+                screening_summary=screening_summary,
+            )
 
         cv_vector: List[float] | None = None
         if cv_text:

@@ -71,6 +71,26 @@ class StructuredCandidateAnalysis(BaseModel):
     interview_questions: List[str] = Field(default_factory=list, alias="Cau hoi phong van")
 
 
+class HrSummaryExperience(BaseModel):
+    so_nam_yeu_cau: str = ""
+    so_nam_thuc_te: str = ""
+    ket_luan: str = ""
+
+
+class HrSummarySkillAssessment(BaseModel):
+    ten_ky_nang: str = ""
+    muc_do_dap_ung: str = ""
+    bang_chung_tu_cv: str = ""
+
+
+class StructuredHrSummary(BaseModel):
+    tong_diem_phu_hop: int = 0
+    nhan_xet_tong_quan: str = ""
+    canh_bao_red_flag: List[str] = Field(default_factory=list)
+    kinh_nghiem: HrSummaryExperience = Field(default_factory=HrSummaryExperience)
+    danh_gia_ky_nang: List[HrSummarySkillAssessment] = Field(default_factory=list)
+
+
 class StructuredCandidateOutput(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
@@ -85,6 +105,7 @@ class StructuredCandidateOutput(BaseModel):
     hardFilterFailureReason: str = ""
     softFilterWarnings: List[str] = Field(default_factory=list)
     detectedLocation: str = ""
+    hrSummary: StructuredHrSummary = Field(default_factory=StructuredHrSummary)
     analysis: StructuredCandidateAnalysis = Field(default_factory=StructuredCandidateAnalysis)
 
 

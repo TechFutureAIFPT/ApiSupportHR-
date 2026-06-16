@@ -1,0 +1,248 @@
+from __future__ import annotations
+
+import re
+import unicodedata
+from typing import Any, Dict, List
+
+
+KNOWN_SKILLS = [
+    "Python",
+    "FastAPI",
+    "Django",
+    "Flask",
+    "Java",
+    "Spring",
+    "Spring Boot",
+    "JavaScript",
+    "TypeScript",
+    "React",
+    "Next.js",
+    "Vue",
+    "Angular",
+    "Node.js",
+    "NestJS",
+    "Express",
+    "REST API",
+    "GraphQL",
+    "SQL",
+    "PostgreSQL",
+    "MySQL",
+    "MongoDB",
+    "Redis",
+    "Docker",
+    "Kubernetes",
+    "AWS",
+    "GCP",
+    "Azure",
+    "Git",
+    "CI/CD",
+    "Excel",
+    "Power BI",
+    "Tableau",
+    "Sales",
+    "Recruitment",
+    "Customer service",
+]
+
+
+def _normalize_ascii(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", value or "")
+    normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    normalized = normalized.replace("đ", "d").replace("Đ", "d")
+    return re.sub(r"[^a-z0-9+.#/]+", " ", normalized.lower()).strip()
+
+
+def _split_sentences(text: str) -> List[str]:
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+|[;•]", text or "")
+        if len(sentence.strip()) >= 8
+    ]
+
+
+def _extract_required_years(hard_filters: Dict[str, Any], jd_text: str) -> str:
+    min_exp = str(hard_filters.get("minExp") or "").strip()
+    if min_exp:
+        return f"{min_exp} năm"
+
+    normalized = _normalize_ascii(jd_text)
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:nam|year)", normalized)
+    if match:
+        return f"{match.group(1).replace(',', '.')} năm"
+    return "Không nêu rõ trong JD"
+
+
+def _extract_required_months(required_years_text: str) -> int | None:
+    match = re.search(r"(\d+(?:\.\d+)?)", required_years_text)
+    if not match:
+        return None
+    return int(float(match.group(1)) * 12)
+
+
+def _format_actual_experience(profile: Dict[str, Any]) -> str:
+    months = int(profile.get("relevantExperienceMonths") or profile.get("totalExperienceMonths") or 0)
+    if months <= 0:
+        return "Chưa đủ dữ liệu để xác định từ CV"
+    years = round(months / 12, 1)
+    return f"Khoảng {years} năm"
+
+
+def _experience_conclusion(required_years_text: str, profile: Dict[str, Any]) -> str:
+    required_months = _extract_required_months(required_years_text)
+    actual_months = int(profile.get("relevantExperienceMonths") or profile.get("totalExperienceMonths") or 0)
+    if required_months is None:
+        return "Đạt"
+    if actual_months <= 0:
+        return "Không đạt"
+    if actual_months > required_months + 12:
+        return "Vượt mức"
+    if actual_months >= required_months:
+        return "Đạt"
+    return "Không đạt"
+
+
+def _extract_required_skills(jd_text: str, hard_filters: Dict[str, Any]) -> List[str]:
+    normalized_jd = _normalize_ascii(jd_text)
+    skills: List[str] = []
+    for skill in KNOWN_SKILLS:
+        if _normalize_ascii(skill) in normalized_jd and skill not in skills:
+            skills.append(skill)
+
+    language = str(hard_filters.get("language") or "").strip()
+    if language and language not in skills:
+        skills.append(language)
+    certificates = str(hard_filters.get("certificates") or "").strip()
+    if certificates:
+        for item in re.split(r"[,/;]+", certificates):
+            token = item.strip()
+            if token and token not in skills:
+                skills.append(token)
+
+    return skills[:8]
+
+
+def _find_skill_evidence(skill: str, cv_text: str) -> str:
+    normalized_skill = _normalize_ascii(skill)
+    if not normalized_skill:
+        return "Không tìm thấy trong CV"
+
+    for sentence in _split_sentences(cv_text):
+        if normalized_skill in _normalize_ascii(sentence):
+            return sentence[:220]
+
+    tokens = [token for token in normalized_skill.split() if len(token) >= 3]
+    for sentence in _split_sentences(cv_text):
+        normalized_sentence = _normalize_ascii(sentence)
+        matched = sum(1 for token in tokens if token in normalized_sentence)
+        if tokens and matched >= max(1, len(tokens) - 1):
+            return sentence[:220]
+
+    return "Không tìm thấy trong CV"
+
+
+def _skill_status(skill: str, evidence: str) -> str:
+    if evidence == "Không tìm thấy trong CV":
+        return "Không đạt"
+    normalized_skill = _normalize_ascii(skill)
+    normalized_evidence = _normalize_ascii(evidence)
+    if normalized_skill and normalized_skill in normalized_evidence:
+        return "Đạt"
+    return "Đạt một phần"
+
+
+def _build_red_flags(
+    candidate: Dict[str, Any],
+    screening_summary: Dict[str, Any],
+    required_years_text: str,
+    experience_conclusion: str,
+) -> List[str]:
+    red_flags: List[str] = []
+
+    for reason in candidate.get("autoRejectReasons") or []:
+        text = str(reason).strip()
+        if text and text not in red_flags:
+            red_flags.append(text)
+
+    hard_failure = str(candidate.get("hardFilterFailureReason") or "").strip()
+    if hard_failure and hard_failure not in red_flags:
+        red_flags.append(hard_failure)
+
+    if screening_summary.get("location", {}).get("status") == "fail":
+        reason = str(screening_summary.get("location", {}).get("reason") or "").strip()
+        if reason and reason not in red_flags:
+            red_flags.append(reason)
+
+    if experience_conclusion == "Không đạt" and required_years_text != "Không nêu rõ trong JD":
+        message = f"Kinh nghiệm thực tế thấp hơn yêu cầu {required_years_text}."
+        if message not in red_flags:
+            red_flags.append(message)
+
+    return red_flags[:5]
+
+
+def _build_overview(
+    candidate: Dict[str, Any],
+    profile: Dict[str, Any],
+    red_flags: List[str],
+    skills: List[Dict[str, str]],
+) -> str:
+    score = int(round(float((candidate.get("analysis") or {}).get("Tổng điểm") or (candidate.get("analysis") or {}).get("Tong diem") or 0)))
+    name = str(candidate.get("candidateName") or "Ứng viên").strip() or "Ứng viên"
+
+    matched_skills = [item["ten_ky_nang"] for item in skills if item["muc_do_dap_ung"] == "Đạt"][:2]
+    actual_exp = _format_actual_experience(profile)
+    if red_flags:
+        return f"{name} hiện có mức phù hợp khoảng {score}/100 nhưng còn rủi ro cần chặn hoặc rà soát thêm. Bằng chứng chính ghi nhận {actual_exp} kinh nghiệm và các điểm vướng lớn gồm: {red_flags[0]}."
+    if matched_skills:
+        return f"{name} đáp ứng khá tốt yêu cầu tuyển dụng với mức phù hợp khoảng {score}/100. CV thể hiện {actual_exp} kinh nghiệm và đã thể hiện rõ các năng lực như {', '.join(matched_skills)}."
+    return f"{name} có mức phù hợp khoảng {score}/100 nhưng bằng chứng chuyên môn trong CV chưa dày. Cần rà kỹ thêm kinh nghiệm thực tế và độ khớp với các kỹ năng bắt buộc."
+
+
+def build_hr_summary(
+    candidate: Dict[str, Any],
+    cv_text: str,
+    jd_text: str,
+    hard_filters: Dict[str, Any],
+    profile: Dict[str, Any] | None = None,
+    screening_summary: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    profile = profile or {}
+    screening_summary = screening_summary or {}
+    existing = candidate.get("hrSummary") if isinstance(candidate.get("hrSummary"), dict) else {}
+    analysis = candidate.get("analysis") if isinstance(candidate.get("analysis"), dict) else {}
+
+    required_years_text = _extract_required_years(hard_filters, jd_text)
+    actual_years_text = _format_actual_experience(profile)
+    experience_result = _experience_conclusion(required_years_text, profile)
+
+    required_skills = _extract_required_skills(jd_text, hard_filters)
+    skill_rows = []
+    for skill in required_skills:
+        evidence = _find_skill_evidence(skill, cv_text)
+        skill_rows.append(
+            {
+                "ten_ky_nang": skill,
+                "muc_do_dap_ung": _skill_status(skill, evidence),
+                "bang_chung_tu_cv": evidence,
+            }
+        )
+
+    red_flags = _build_red_flags(candidate, screening_summary, required_years_text, experience_result)
+    overview = _build_overview(candidate, profile, red_flags, skill_rows)
+    raw_score = existing.get("tong_diem_phu_hop")
+    if isinstance(raw_score, (int, float)):
+        score = int(max(0, min(100, round(float(raw_score)))))
+    else:
+        score = int(max(0, min(100, round(float(analysis.get("Tổng điểm") or analysis.get("Tong diem") or 0)))))
+
+    return {
+        "tong_diem_phu_hop": score,
+        "nhan_xet_tong_quan": str(existing.get("nhan_xet_tong_quan") or "").strip() or overview,
+        "canh_bao_red_flag": red_flags,
+        "kinh_nghiem": {
+            "so_nam_yeu_cau": required_years_text,
+            "so_nam_thuc_te": actual_years_text,
+            "ket_luan": experience_result,
+        },
+        "danh_gia_ky_nang": skill_rows,
+    }

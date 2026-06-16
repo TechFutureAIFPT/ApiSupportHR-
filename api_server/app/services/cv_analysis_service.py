@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.prompts import render_prompt
 from app.schemas.analysis import StructuredCandidateOutputList
 from app.services.gemini_service import generate_content
+from app.services.hr_summary_service import build_hr_summary
 from app.services.role_profile_service import build_role_profile_summary, resolve_role_profile
 from app.utils.text_normalization import normalize_display_text
 
@@ -1493,12 +1494,29 @@ def _ensure_analysis_shape(candidate: Dict[str, Any], criterion_specs: List[Dict
     return candidate
 
 
-def _post_process_candidates(candidates: List[Dict[str, Any]], weights: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _post_process_candidates(
+    candidates: List[Dict[str, Any]],
+    weights: Dict[str, Any],
+    *,
+    jd_text: str = "",
+    hard_filters: Dict[str, Any] | None = None,
+    cv_text_map: Dict[str, str] | None = None,
+) -> List[Dict[str, Any]]:
     criterion_specs = _extract_criterion_specs(weights)
     if not criterion_specs:
         return candidates
 
-    return [_ensure_analysis_shape(candidate, criterion_specs) for candidate in candidates if isinstance(candidate, dict)]
+    normalized_candidates = [_ensure_analysis_shape(candidate, criterion_specs) for candidate in candidates if isinstance(candidate, dict)]
+
+    if jd_text:
+        filters = hard_filters or {}
+        text_map = cv_text_map or {}
+        for candidate in normalized_candidates:
+            file_name = str(candidate.get("fileName") or candidate.get("file_name") or "")
+            cv_text = text_map.get(file_name) or text_map.get(file_name.lower()) or str(candidate.get("_cvText") or "")
+            candidate["hrSummary"] = build_hr_summary(candidate, cv_text, jd_text, filters)
+
+    return normalized_candidates
 
 
 def normalize_candidates_against_weights(
@@ -1671,7 +1689,14 @@ def analyze_cv_entries(
             _analysis_generation_config(include_schema=False),
         )
 
-    return _post_process_candidates(_extract_json_array(response_text), weights)
+    cv_text_map = {str(entry.get("file_name") or ""): str(entry.get("text") or "") for entry in cv_entries}
+    return _post_process_candidates(
+        _extract_json_array(response_text),
+        weights,
+        jd_text=jd_text,
+        hard_filters=hard_filters,
+        cv_text_map=cv_text_map,
+    )
 
 
 async def analyze_cv_entries_async(
@@ -1710,4 +1735,11 @@ async def analyze_cv_entries_async(
             _analysis_generation_config(include_schema=False),
         )
 
-    return _post_process_candidates(_extract_json_array(response_text), weights)
+    cv_text_map = {str(entry.get("file_name") or ""): str(entry.get("text") or "") for entry in cv_entries}
+    return _post_process_candidates(
+        _extract_json_array(response_text),
+        weights,
+        jd_text=jd_text,
+        hard_filters=hard_filters,
+        cv_text_map=cv_text_map,
+    )

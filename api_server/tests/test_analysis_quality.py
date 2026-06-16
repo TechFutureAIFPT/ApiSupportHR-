@@ -121,6 +121,7 @@ _install_dependency_stubs()
 cv_analysis_service = importlib.import_module("app.services.cv_analysis_service")
 candidate_enrichment_service = importlib.import_module("app.services.candidate_enrichment_service")
 candidate_screening_service = importlib.import_module("app.services.candidate_screening_service")
+hr_summary_service = importlib.import_module("app.services.hr_summary_service")
 role_profile_service = importlib.import_module("app.services.role_profile_service")
 
 
@@ -382,6 +383,40 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertEqual(filters["age"]["min"], 22)
         self.assertIn("business-administration", filters["majorGroups"])
 
+    def test_hr_summary_marks_missing_skill_without_inventing_evidence(self) -> None:
+        summary = hr_summary_service.build_hr_summary(
+            {
+                "candidateName": "Nguyễn Văn A",
+                "analysis": {"Tong diem": 72},
+            },
+            "Ứng viên đã làm Python và FastAPI trong hệ thống nội bộ.",
+            "Yêu cầu Python, FastAPI, Docker.",
+            {"minExp": "3"},
+            profile={"relevantExperienceMonths": 30, "totalExperienceMonths": 30},
+            screening_summary={},
+        )
+
+        docker_item = next(item for item in summary["danh_gia_ky_nang"] if item["ten_ky_nang"] == "Docker")
+        self.assertEqual(docker_item["muc_do_dap_ung"], "Không đạt")
+        self.assertEqual(docker_item["bang_chung_tu_cv"], "Không tìm thấy trong CV")
+
+    def test_hr_summary_flags_location_mismatch(self) -> None:
+        summary = hr_summary_service.build_hr_summary(
+            {
+                "candidateName": "Nguyễn Văn B",
+                "hardFilterFailureReason": "Địa điểm hiện tại không khớp yêu cầu vị trí.",
+                "analysis": {"Tong diem": 61},
+            },
+            "Địa chỉ: TP. Hồ Chí Minh. Kinh nghiệm sales 4 năm.",
+            "Tuyển nhân viên kinh doanh tại Hà Nội.",
+            {"location": "Ha Noi", "minExp": "3"},
+            profile={"currentLocation": "Thanh pho Ho Chi Minh", "relevantExperienceMonths": 48, "totalExperienceMonths": 48},
+            screening_summary={"location": {"status": "fail", "reason": "Địa điểm hiện tại không khớp yêu cầu vị trí."}},
+        )
+
+        self.assertTrue(summary["canh_bao_red_flag"])
+        self.assertIn("Địa điểm", summary["canh_bao_red_flag"][0])
+
     def test_enrich_candidates_adds_classifier_backed_industry_fit(self) -> None:
         candidate_enrichment_service.embed_text = lambda text, model=None: [1.0, 0.0]
         candidate_enrichment_service.search_similar_records = (
@@ -441,6 +476,9 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertGreater(candidate["industryFitInsights"]["finalScore"], 0)
         self.assertIn("embeddingInsights", candidate)
         self.assertGreater(candidate["analysis"]["Tổng điểm"], 50.0)
+
+        self.assertIn("hrSummary", candidate)
+        self.assertIn("tong_diem_phu_hop", candidate["hrSummary"])
 
         detail = next(
             (
