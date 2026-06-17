@@ -25,6 +25,7 @@ def cleanup_synced_history(user: AuthenticatedUser, keep_count: int = MAX_HISTOR
 
 def sync_history_entry(user: AuthenticatedUser, analysis_data: dict[str, Any]) -> str:
     candidates = list(analysis_data.get("candidates") or [])
+    screening_index = _build_history_screening_index([candidate for candidate in candidates if isinstance(candidate, dict)])
     grades_count = {"A": 0, "B": 0, "C": 0}
     for candidate in candidates:
         grade = "C"
@@ -46,6 +47,7 @@ def sync_history_entry(user: AuthenticatedUser, analysis_data: dict[str, Any]) -
             "locationRequirement": str(job.get("locationRequirement") or ""),
             "totalCandidates": len(candidates),
             "gradesCount": grades_count,
+            **screening_index,
         }
     )
     cleanup_synced_history(user, MAX_HISTORY_ENTRIES_PER_USER)
@@ -157,8 +159,158 @@ def _details(record: dict[str, Any], limit: int = 6) -> list[dict[str, Any]]:
     return compacted
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _candidate_decision_status(candidate: dict[str, Any]) -> str:
+    stage_decision = _as_dict(candidate.get("stageDecision"))
+    status = str(stage_decision.get("status") or "").strip()
+    if status:
+        return status
+
+    summary = _as_dict(candidate.get("screeningSummary"))
+    has_mandatory_review = False
+    for factor in summary.values():
+        if not isinstance(factor, dict):
+            continue
+        if factor.get("mandatory") and factor.get("status") == "fail":
+            return "hold"
+        if factor.get("mandatory") and factor.get("status") == "review":
+            has_mandatory_review = True
+    if has_mandatory_review:
+        return "review"
+    return "unknown"
+
+
+def _candidate_screening_outcome(candidate: dict[str, Any]) -> dict[str, str]:
+    status = _candidate_decision_status(candidate)
+    labels = {
+        "hold": "Loại tự động",
+        "review": "Cần HR rà soát",
+        "ready_to_advance": "Đạt tự động",
+        "not_ready": "Chưa sẵn sàng",
+        "unknown": "Chưa kết luận",
+    }
+    return {"status": status, "label": labels.get(status, status or "Chưa kết luận")}
+
+
+def _compact_screening_summary(value: Any) -> dict[str, Any]:
+    summary = _as_dict(value)
+    compacted: dict[str, Any] = {}
+    for key in ("age", "education", "major", "knowledge", "experience", "location"):
+        factor = _as_dict(summary.get(key))
+        if not factor:
+            continue
+        compacted[key] = {
+            "status": str(factor.get("status") or "na"),
+            "mandatory": bool(factor.get("mandatory")),
+            "expected": factor.get("expected"),
+            "observed": factor.get("observed"),
+            "reason": str(factor.get("reason") or "")[:MOBILE_TEXT_FIELD_LENGTH],
+            "evidence": str(factor.get("evidence") or "")[:MOBILE_TEXT_FIELD_LENGTH],
+        }
+    return compacted
+
+
+def _compact_candidate_profile(value: Any) -> dict[str, Any]:
+    profile = _as_dict(value)
+    if not profile:
+        return {}
+    return {
+        "birthYear": profile.get("birthYear"),
+        "age": profile.get("age"),
+        "currentLocation": profile.get("currentLocation"),
+        "educationLevel": profile.get("educationLevel"),
+        "educationMajors": _as_list(profile.get("educationMajors"))[:8],
+        "inferredKnowledgeAreas": _as_list(profile.get("inferredKnowledgeAreas"))[:8],
+        "totalExperienceMonths": profile.get("totalExperienceMonths"),
+        "relevantExperienceMonths": profile.get("relevantExperienceMonths"),
+        "experienceDomains": _as_list(profile.get("experienceDomains"))[:8],
+        "extractionWarnings": [str(item)[:MOBILE_TEXT_FIELD_LENGTH] for item in _as_list(profile.get("extractionWarnings"))[:5]],
+    }
+
+
+def _compact_hr_summary(value: Any) -> dict[str, Any]:
+    summary = _as_dict(value)
+    if not summary:
+        return {}
+    experience = _as_dict(summary.get("kinh_nghiem"))
+    skills = [
+        {
+            "ten_ky_nang": str(item.get("ten_ky_nang") or "")[:120],
+            "muc_do_dap_ung": str(item.get("muc_do_dap_ung") or "")[:80],
+            "bang_chung_tu_cv": str(item.get("bang_chung_tu_cv") or "")[:MOBILE_TEXT_FIELD_LENGTH],
+        }
+        for item in _as_list(summary.get("danh_gia_ky_nang"))[:6]
+        if isinstance(item, dict)
+    ]
+    return {
+        "tong_diem_phu_hop": int(_score_number(summary.get("tong_diem_phu_hop"))),
+        "nhan_xet_tong_quan": str(summary.get("nhan_xet_tong_quan") or "")[:MOBILE_TEXT_FIELD_LENGTH],
+        "canh_bao_red_flag": [str(item)[:MOBILE_TEXT_FIELD_LENGTH] for item in _as_list(summary.get("canh_bao_red_flag"))[:5]],
+        "kinh_nghiem": {
+            "so_nam_yeu_cau": str(experience.get("so_nam_yeu_cau") or "")[:120],
+            "so_nam_thuc_te": str(experience.get("so_nam_thuc_te") or "")[:120],
+            "ket_luan": str(experience.get("ket_luan") or "")[:80],
+        },
+        "danh_gia_ky_nang": skills,
+    }
+
+
+def _build_history_screening_index(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    by_decision = {"ready_to_advance": 0, "review": 0, "hold": 0, "not_ready": 0, "unknown": 0}
+    fail_factors = {key: 0 for key in ("age", "education", "major", "knowledge", "experience", "location")}
+    top_hr_summaries: list[dict[str, Any]] = []
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or candidate.get("status") == "FAILED":
+            continue
+        status = _candidate_decision_status(candidate)
+        if status not in by_decision:
+            status = "unknown"
+        by_decision[status] += 1
+
+        for key, factor in _as_dict(candidate.get("screeningSummary")).items():
+            if key in fail_factors and isinstance(factor, dict) and factor.get("status") == "fail":
+                fail_factors[key] += 1
+
+        hr_summary = _compact_hr_summary(candidate.get("hrSummary"))
+        if hr_summary:
+            top_hr_summaries.append(
+                {
+                    "candidateName": candidate.get("candidateName") or candidate.get("name") or "",
+                    "fileName": candidate.get("fileName") or "",
+                    "score": hr_summary.get("tong_diem_phu_hop") or 0,
+                    "nhan_xet_tong_quan": hr_summary.get("nhan_xet_tong_quan") or "",
+                    "canh_bao_red_flag": hr_summary.get("canh_bao_red_flag") or [],
+                    "screeningOutcome": _candidate_screening_outcome(candidate),
+                }
+            )
+
+    top_hr_summaries.sort(key=lambda item: item.get("score") or 0, reverse=True)
+    return {
+        "screeningStats": {
+            "totalCandidates": sum(by_decision.values()),
+            "byDecision": by_decision,
+            "failFactors": fail_factors,
+        },
+        "autoRejectCount": by_decision["hold"],
+        "reviewCount": by_decision["review"],
+        "readyCount": by_decision["ready_to_advance"],
+        "topHrSummaries": top_hr_summaries[:3],
+    }
+
+
 def _compact_raw_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     analysis = candidate.get("analysis") if isinstance(candidate.get("analysis"), dict) else {}
+    hr_summary = _compact_hr_summary(candidate.get("hrSummary"))
+    screening_summary = _compact_screening_summary(candidate.get("screeningSummary"))
+    candidate_profile = _compact_candidate_profile(candidate.get("candidateProfile"))
     return {
         "id": candidate.get("id"),
         "candidateName": candidate.get("candidateName") or candidate.get("name"),
@@ -169,6 +321,12 @@ def _compact_raw_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "experienceLevel": candidate.get("experienceLevel"),
         "detectedLocation": candidate.get("detectedLocation"),
         "status": candidate.get("status"),
+        "stageDecision": candidate.get("stageDecision") if isinstance(candidate.get("stageDecision"), dict) else None,
+        "screeningOutcome": _candidate_screening_outcome(candidate),
+        "autoRejectReasons": [str(item)[:MOBILE_TEXT_FIELD_LENGTH] for item in _as_list(candidate.get("autoRejectReasons"))[:5]],
+        "screeningSummary": screening_summary,
+        "candidateProfile": candidate_profile,
+        "hrSummary": hr_summary,
         "analysis": {
             "Tổng điểm": int(_score_number(analysis.get("Tổng điểm") or analysis.get("Tong diem") or analysis.get("score"))),
             "Hạng": _first_text(analysis, ["Hạng", "Hang", "rank"], "C"),
@@ -227,6 +385,8 @@ def _compact_candidate_view(candidate: dict[str, Any], entry: dict[str, Any], in
     rank = _first_text(analysis, ["Hạng", "Hang", "rank"], str(candidate.get("grade") or "C")).upper() or "C"
     candidate_name = str(candidate.get("candidateName") or candidate.get("name") or "Ứng viên chưa xác định")
     raw = _compact_raw_candidate(candidate)
+    screening_summary = _compact_screening_summary(candidate.get("screeningSummary"))
+    hr_summary = _compact_hr_summary(candidate.get("hrSummary"))
 
     return {
         "id": _candidate_id(candidate, entry_id, index),
@@ -248,10 +408,16 @@ def _compact_candidate_view(candidate: dict[str, Any], entry: dict[str, Any], in
         "details": _details(analysis, 6),
         "warnings": [
             str(item)[:MOBILE_TEXT_FIELD_LENGTH]
-            for item in list(candidate.get("softFilterWarnings") or [])
+            for item in _as_list(candidate.get("softFilterWarnings"))
             if str(item).strip()
         ],
         "hardFilterFailureReason": candidate.get("hardFilterFailureReason"),
+        "stageDecision": candidate.get("stageDecision") if isinstance(candidate.get("stageDecision"), dict) else None,
+        "screeningOutcome": _candidate_screening_outcome(candidate),
+        "autoRejectReasons": [str(item)[:MOBILE_TEXT_FIELD_LENGTH] for item in _as_list(candidate.get("autoRejectReasons"))[:5]],
+        "screeningSummary": screening_summary,
+        "candidateProfile": _compact_candidate_profile(candidate.get("candidateProfile")),
+        "hrSummary": hr_summary,
         "hardFilters": hard_filters,
         "jdText": str(full_payload.get("jdText") or entry.get("jdTextSnippet") or "")[:MOBILE_JD_SNIPPET_LENGTH],
         "jobPosition": str(full_payload.get("jobPosition") or entry.get("jobPosition") or candidate.get("jobTitle") or ""),
@@ -261,7 +427,9 @@ def _compact_candidate_view(candidate: dict[str, Any], entry: dict[str, Any], in
 
 def _compact_history_entry(entry: dict[str, Any]) -> dict[str, Any]:
     full_payload = entry.get("fullPayload") if isinstance(entry.get("fullPayload"), dict) else {}
-    compact_candidates = [_compact_raw_candidate(candidate) for candidate in _extract_candidates(entry)[:6]]
+    extracted_candidates = _extract_candidates(entry)
+    compact_candidates = [_compact_raw_candidate(candidate) for candidate in extracted_candidates[:6]]
+    index = _build_history_screening_index(extracted_candidates)
     return {
         "id": str(entry.get("id") or ""),
         "timestamp": to_millis(entry.get("timestamp")) or int(_score_number(entry.get("timestamp"))),
@@ -269,6 +437,11 @@ def _compact_history_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "locationRequirement": str(entry.get("locationRequirement") or ""),
         "totalCandidates": int(_score_number(entry.get("totalCandidates"), len(compact_candidates))),
         "userEmail": str(entry.get("userEmail") or entry.get("email") or ""),
+        "screeningStats": entry.get("screeningStats") if isinstance(entry.get("screeningStats"), dict) else index["screeningStats"],
+        "autoRejectCount": int(_score_number(entry.get("autoRejectCount"), index["autoRejectCount"])),
+        "reviewCount": int(_score_number(entry.get("reviewCount"), index["reviewCount"])),
+        "readyCount": int(_score_number(entry.get("readyCount"), index["readyCount"])),
+        "topHrSummaries": entry.get("topHrSummaries") if isinstance(entry.get("topHrSummaries"), list) else index["topHrSummaries"],
         "fullPayload": {
             "jdText": str(full_payload.get("jdText") or entry.get("jdTextSnippet") or "")[:MOBILE_JD_SNIPPET_LENGTH],
             "jobPosition": str(full_payload.get("jobPosition") or entry.get("jobPosition") or ""),
@@ -384,6 +557,7 @@ def save_history_session(user: AuthenticatedUser, payload: dict[str, Any]) -> st
     user_email = str(payload.get("userEmail") or user.email)
     weights = payload.get("weights") or {}
     hard_filters = payload.get("hardFilters") or {}
+    screening_index = _build_history_screening_index([candidate for candidate in candidates if isinstance(candidate, dict)])
 
     doc_ref = repo.create_document(repo.cv_history())
     doc_ref.set(
@@ -396,6 +570,7 @@ def save_history_session(user: AuthenticatedUser, payload: dict[str, Any]) -> st
             "totalCandidates": total,
             "grades": grades,
             "topCandidates": top_candidates,
+            **screening_index,
             "fullPayload": {
                 "jdText": jd_text,
                 "jobPosition": job_position,

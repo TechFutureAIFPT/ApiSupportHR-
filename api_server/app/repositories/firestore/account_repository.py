@@ -8,6 +8,7 @@ from app.integrations.firebase_admin import get_firestore_client
 
 
 USERS_COLLECTION = "users"
+USER_SETTINGS_COLLECTION = "userSettings"
 CV_HISTORY_COLLECTION = "cvHistory"
 SYNCED_CACHE_COLLECTION = "syncedAnalysisCache"
 SYNCED_HISTORY_COLLECTION = "syncedAnalysisHistory"
@@ -36,6 +37,10 @@ def server_timestamp():
 
 def users():
     return db().collection(USERS_COLLECTION)
+
+
+def user_settings():
+    return db().collection(USER_SETTINGS_COLLECTION)
 
 
 def cv_history():

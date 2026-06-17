@@ -23,6 +23,15 @@ class UserAvatarUpdateRequest(BaseModel):
     avatar: str
 
 
+class UserSettingsPatchRequest(BaseModel):
+    version: int | None = None
+    ui: dict[str, Any] | None = None
+    account: dict[str, Any] | None = None
+    workflow: dict[str, Any] | None = None
+    notifications: dict[str, Any] | None = None
+    sync: dict[str, Any] | None = None
+
+
 class LocalHistoryMigrationEntry(BaseModel):
     jdText: str = ""
     jdTitle: str = "Vị trí tuyển dụng"

@@ -25,6 +25,31 @@ Lưu hồ sơ người dùng:
 - `createdAt`
 - `updatedAt`
 
+### `userSettings`
+
+Lưu cài đặt người dùng cấp tài khoản. Backend tự tạo document khi user gọi API settings, không cần tạo thủ công trong Firebase Console.
+
+Document id là `uid`.
+
+Các field chính:
+
+- `uid`
+- `email`
+- `version`
+- `settings`
+- `createdAt`
+- `updatedAt`
+
+`settings` gồm 5 nhóm:
+
+- `ui`: `sidebarDensity`, `accessibleMode`, `reducedMotion`, `language`, `theme`
+- `account`: `displayName`, `avatar`, `email`
+- `workflow`: `autoSaveDraft`, `restoreDraft`, `rememberScoringConfig`, `autoSaveHistory`, `newSessionMode`
+- `notifications`: `analysisComplete`, `syncErrors`, `historySaved`, `sidebarBadge`, `inAppOnly`
+- `sync`: `autoSync`, `historyRetention`, `lastSyncedAt`
+
+Lưu ý v1 khóa `theme = light`, `language = vi-VN`, `notifications.inAppOnly = true`.
+
 ### `cvHistory`
 
 Collection này đang được dùng cho hai kiểu dữ liệu:
@@ -43,8 +68,20 @@ Các field thường gặp:
 - `fullPayload`
 - `grades`
 - `topCandidates`
+- `screeningStats`
+- `autoRejectCount`
+- `reviewCount`
+- `readyCount`
+- `topHrSummaries`
 - `timestamp`
 - `createdAt`
+
+Với snapshot phân tích đầy đủ, `fullPayload.candidates[]` có thể chứa thêm:
+
+- `candidateProfile`
+- `screeningSummary`
+- `autoRejectReasons`
+- `hrSummary`
 
 Lưu ý: đây là collection có hơi trộn nhiều kiểu payload, nên khi đọc code sẽ thấy backend phải lọc field để biết document thuộc dạng nào.
 
@@ -61,7 +98,14 @@ Lưu lịch sử đồng bộ của phiên phân tích:
 - `locationRequirement`
 - `totalCandidates`
 - `gradesCount`
+- `screeningStats`
+- `autoRejectCount`
+- `reviewCount`
+- `readyCount`
+- `topHrSummaries`
 - `timestamp`
+
+`analysisData.candidates[]` có thể chứa `candidateProfile`, `screeningSummary`, `autoRejectReasons`, `hrSummary`.
 
 ### `uploadedFiles`
 

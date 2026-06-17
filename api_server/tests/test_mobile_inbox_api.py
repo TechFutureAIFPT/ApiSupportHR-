@@ -106,6 +106,42 @@ class MobileInboxApiTests(unittest.TestCase):
                         "_cvText": "raw cv text",
                         "extractedText": "raw extracted text",
                         "status": "SUCCESS",
+                        "stageDecision": {"status": "hold", "label": "Loại tự động"},
+                        "autoRejectReasons": ["Sai địa điểm bắt buộc"],
+                        "candidateProfile": {
+                            "age": 29,
+                            "currentLocation": "TP. Hồ Chí Minh",
+                            "educationLevel": "Bachelor",
+                            "educationMajors": ["business-administration"],
+                            "totalExperienceMonths": 48,
+                            "relevantExperienceMonths": 48,
+                        },
+                        "screeningSummary": {
+                            "location": {
+                                "status": "fail",
+                                "mandatory": True,
+                                "expected": "Hà Nội",
+                                "observed": "TP. Hồ Chí Minh",
+                                "reason": "Địa điểm không khớp.",
+                            }
+                        },
+                        "hrSummary": {
+                            "tong_diem_phu_hop": 77,
+                            "nhan_xet_tong_quan": "Ứng viên mạnh về kinh nghiệm nhưng sai địa điểm bắt buộc.",
+                            "canh_bao_red_flag": ["Sai địa điểm bắt buộc"],
+                            "kinh_nghiem": {
+                                "so_nam_yeu_cau": "3 năm",
+                                "so_nam_thuc_te": "4 năm",
+                                "ket_luan": "Vượt mức",
+                            },
+                            "danh_gia_ky_nang": [
+                                {
+                                    "ten_ky_nang": "Python",
+                                    "muc_do_dap_ung": "Đạt",
+                                    "bang_chung_tu_cv": "Ứng viên dùng Python trong dự án backend.",
+                                }
+                            ],
+                        },
                         "analysis": {
                             "Tổng điểm": 88,
                             "Hạng": "A",
@@ -136,6 +172,14 @@ class MobileInboxApiTests(unittest.TestCase):
         self.assertNotIn("extractedText", candidate["raw"])
         self.assertLessEqual(len(candidate["details"]), 6)
         self.assertLessEqual(len(candidate["details"][0]["Dẫn chứng"]), 420)
+        self.assertEqual(candidate["screeningOutcome"]["status"], "hold")
+        self.assertEqual(candidate["autoRejectReasons"], ["Sai địa điểm bắt buộc"])
+        self.assertEqual(candidate["screeningSummary"]["location"]["status"], "fail")
+        self.assertEqual(candidate["candidateProfile"]["age"], 29)
+        self.assertEqual(candidate["hrSummary"]["tong_diem_phu_hop"], 77)
+        self.assertEqual(history["autoRejectCount"], 1)
+        self.assertEqual(history["screeningStats"]["failFactors"]["location"], 1)
+        self.assertEqual(history["topHrSummaries"][0]["score"], 77)
 
 
 if __name__ == "__main__":
