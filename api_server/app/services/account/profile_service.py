@@ -4,20 +4,31 @@ from typing import Any
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
-from app.services.account.shared import serialize, sorted_docs
+from app.services.account.shared import fast_cleanup, optimized_docs, serialize, sorted_docs
 
 
 MAX_HISTORY_ENTRIES_PER_USER = 100
 
 
 def cleanup_profile_cv_history(user: AuthenticatedUser, keep_count: int = MAX_HISTORY_ENTRIES_PER_USER) -> None:
-    docs = list(repo.cv_history().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "timestamp")
-    for doc in ordered[keep_count:]:
+    scan_limit = keep_count + 30
+    docs = optimized_docs(repo.cv_history(), user.uid, scan_limit)
+    excess = docs[keep_count:]
+    if not excess:
+        return
+    for doc in excess:
         data = doc.to_dict() or {}
         if "jdText" not in data and "jdTitle" not in data:
             continue
         doc.reference.delete()
+    if len(docs) == scan_limit:
+        keep_ids = {doc.id for doc in docs[:keep_count]}
+        for doc in repo.cv_history().where("uid", "==", user.uid).stream():
+            if doc.id not in keep_ids:
+                data = doc.to_dict() or {}
+                if "jdText" not in data and "jdTitle" not in data:
+                    continue
+                doc.reference.delete()
 
 
 def upsert_user_profile(
@@ -82,10 +93,9 @@ def save_cv_history(user: AuthenticatedUser, email: str, jd_text: str, jd_title:
 
 
 def get_user_cv_history(user: AuthenticatedUser, limit_count: int = 50) -> list[dict[str, Any]]:
-    docs = list(repo.cv_history().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "timestamp")
+    docs = optimized_docs(repo.cv_history(), user.uid, limit_count + 20)
     items: list[dict[str, Any]] = []
-    for doc in ordered:
+    for doc in docs:
         data = doc.to_dict() or {}
         if "jdText" not in data and "jdTitle" not in data:
             continue

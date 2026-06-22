@@ -8,7 +8,7 @@ from typing import Any
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
-from app.services.account.shared import serialize, sorted_docs
+from app.services.account.shared import fast_cleanup, optimized_docs, serialize, sorted_docs
 
 
 MAX_CACHE_ENTRIES_PER_USER = 50
@@ -104,7 +104,7 @@ async def sync_cache_entry_async(
 
 
 def get_all_user_cache(user: AuthenticatedUser) -> dict[str, Any]:
-    docs = list(repo.synced_cache().where("uid", "==", user.uid).stream())
+    docs = optimized_docs(repo.synced_cache(), user.uid, MAX_CACHE_ENTRIES_PER_USER + 10)
     now = datetime.now(timezone.utc)
     cache_map: dict[str, Any] = {}
     for doc in docs:
@@ -118,13 +118,13 @@ def get_all_user_cache(user: AuthenticatedUser) -> dict[str, Any]:
 
 
 def clear_user_cache(user: AuthenticatedUser) -> None:
-    docs = list(repo.synced_cache().where("uid", "==", user.uid).stream())
-    for doc in docs:
-        doc.reference.delete()
+    while True:
+        docs = list(repo.synced_cache().where("uid", "==", user.uid).limit(100).stream())
+        if not docs:
+            break
+        for doc in docs:
+            doc.reference.delete()
 
 
 def cleanup_user_cache(user: AuthenticatedUser, keep_count: int = MAX_CACHE_ENTRIES_PER_USER) -> None:
-    docs = list(repo.synced_cache().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "timestamp")
-    for doc in ordered[keep_count:]:
-        doc.reference.delete()
+    fast_cleanup(repo.synced_cache(), user.uid, keep_count)

@@ -24,3 +24,40 @@ def serialize(value: Any) -> Any:
 
 def sorted_docs(docs: Iterable[Any], field_name: str, reverse: bool = True) -> list[Any]:
     return sorted(docs, key=lambda doc: to_millis(doc.to_dict().get(field_name)), reverse=reverse)
+
+
+def optimized_docs(collection_ref: Any, uid: str, limit_count: int, timestamp_field: str = "timestamp") -> list[Any]:
+    """Fetch docs using Firestore-level ORDER BY + LIMIT. Falls back to Python sort when composite index is missing."""
+    try:
+        return list(
+            collection_ref.where("uid", "==", uid)
+            .order_by(timestamp_field, direction="DESCENDING")
+            .limit(limit_count)
+            .stream()
+        )
+    except Exception:
+        return sorted_docs(
+            list(collection_ref.where("uid", "==", uid).stream()),
+            timestamp_field,
+        )[:limit_count]
+
+
+def fast_cleanup(collection_ref: Any, uid: str, keep_count: int, timestamp_field: str = "timestamp") -> None:
+    """Delete documents beyond keep_count using an ordered bounded scan.
+
+    Reads at most keep_count + 30 docs (not the entire collection), so the
+    common no-op case (user under limit) completes in a single bounded read.
+    """
+    scan_limit = keep_count + 30
+    docs = optimized_docs(collection_ref, uid, scan_limit, timestamp_field)
+    excess = docs[keep_count:]
+    if not excess:
+        return
+    for doc in excess:
+        doc.reference.delete()
+    # If we hit the scan ceiling, there may be more — sweep only what's unknown
+    if len(docs) == scan_limit:
+        keep_ids = {doc.id for doc in docs[:keep_count]}
+        for doc in collection_ref.where("uid", "==", uid).stream():
+            if doc.id not in keep_ids:
+                doc.reference.delete()

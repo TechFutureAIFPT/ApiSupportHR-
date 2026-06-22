@@ -7,7 +7,7 @@ import unicodedata
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
-from app.services.account.shared import serialize, sorted_docs, to_millis
+from app.services.account.shared import fast_cleanup, optimized_docs, serialize, sorted_docs, to_millis
 from app.utils.text_normalization import normalize_display_text
 
 
@@ -17,10 +17,7 @@ MOBILE_TEXT_FIELD_LENGTH = 420
 
 
 def cleanup_synced_history(user: AuthenticatedUser, keep_count: int = MAX_HISTORY_ENTRIES_PER_USER) -> None:
-    docs = list(repo.synced_history().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "timestamp")
-    for doc in ordered[keep_count:]:
-        doc.reference.delete()
+    fast_cleanup(repo.synced_history(), user.uid, keep_count)
 
 
 def sync_history_entry(user: AuthenticatedUser, analysis_data: dict[str, Any]) -> str:
@@ -55,20 +52,16 @@ def sync_history_entry(user: AuthenticatedUser, analysis_data: dict[str, Any]) -
 
 
 def get_synced_history(user: AuthenticatedUser, limit_count: int = 20) -> list[dict[str, Any]]:
-    docs = list(repo.synced_history().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "timestamp")[:limit_count]
-    return [serialize((doc.to_dict() or {}).get("analysisData")) for doc in ordered]
+    docs = optimized_docs(repo.synced_history(), user.uid, limit_count)
+    return [serialize((doc.to_dict() or {}).get("analysisData")) for doc in docs]
 
 
 def get_sync_stats(user: AuthenticatedUser) -> dict[str, Any]:
-    cache_docs = list(repo.synced_cache().where("uid", "==", user.uid).stream())
-    history_docs = list(repo.synced_history().where("uid", "==", user.uid).stream())
-    feedback_docs = list(repo.analysis_feedback().where("uid", "==", user.uid).stream())
-    latest_history = sorted_docs(history_docs, "timestamp")[:1]
-    last_sync_time = None
-    if latest_history:
-        last_sync_time = serialize(latest_history[0].to_dict().get("timestamp"))
-
+    stat_limit = 200
+    cache_docs = list(repo.synced_cache().where("uid", "==", user.uid).limit(stat_limit).stream())
+    history_docs = optimized_docs(repo.synced_history(), user.uid, stat_limit)
+    feedback_docs = list(repo.analysis_feedback().where("uid", "==", user.uid).limit(stat_limit).stream())
+    last_sync_time = serialize(history_docs[0].to_dict().get("timestamp")) if history_docs else None
     return {
         "cacheEntries": len(cache_docs),
         "historyEntries": len(history_docs),
@@ -453,15 +446,7 @@ def _compact_history_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def _optimized_history_docs(collection_ref: Any, user: AuthenticatedUser, limit_count: int):
-    try:
-        return list(
-            collection_ref.where("uid", "==", user.uid)
-            .order_by("timestamp", direction="DESCENDING")
-            .limit(limit_count)
-            .stream()
-        )
-    except Exception:
-        return sorted_docs(list(collection_ref.where("uid", "==", user.uid).stream()), "timestamp")[:limit_count]
+    return optimized_docs(collection_ref, user.uid, limit_count)
 
 
 def fetch_mobile_inbox(
@@ -586,15 +571,10 @@ def save_history_session(user: AuthenticatedUser, payload: dict[str, Any]) -> st
 
 
 def fetch_recent_history(user: AuthenticatedUser, limit_count: int = 20, user_email: str | None = None) -> list[dict[str, Any]]:
-    docs = list(repo.cv_history().where("uid", "==", user.uid).stream())
-    synced_docs = list(repo.synced_history().where("uid", "==", user.uid).stream())
-    ordered = [
-        ("cv", doc)
-        for doc in sorted_docs(docs, "timestamp")
-    ] + [
-        ("sync", doc)
-        for doc in sorted_docs(synced_docs, "timestamp")
-    ]
+    per_collection = min(limit_count * 2, 100)
+    cv_docs = optimized_docs(repo.cv_history(), user.uid, per_collection)
+    sync_docs = optimized_docs(repo.synced_history(), user.uid, per_collection)
+    ordered = [("cv", doc) for doc in cv_docs] + [("sync", doc) for doc in sync_docs]
     ordered.sort(key=lambda item: to_millis((item[1].to_dict() or {}).get("timestamp")), reverse=True)
     items = []
     for source, doc in ordered:
