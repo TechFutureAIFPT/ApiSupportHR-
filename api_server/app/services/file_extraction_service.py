@@ -5,6 +5,7 @@ from io import BytesIO
 from typing import Iterable, Literal
 
 import fitz
+import pymupdf4llm
 from docx import Document
 
 from app.core.config import get_settings
@@ -24,21 +25,9 @@ def _normalize_text(text: str) -> str:
         text.replace("\r\n", "\n")
         .replace("\r", "\n")
         .replace("\t", " ")
-        .replace("\u00a0", " ")
+        .replace(" ", " ")
         .strip()
     )
-
-
-def _correct_ocr_errors(text: str) -> str:
-    replacements = [
-        (" rn ", " m "),
-        ("0", "0"),
-    ]
-    cleaned = text
-    for source, target in replacements:
-        cleaned = cleaned.replace(source, target)
-    normalized_lines = [" ".join(line.split()) for line in cleaned.splitlines()]
-    return "\n".join(line for line in normalized_lines if line)
 
 
 def _is_text_sufficient(text: str) -> bool:
@@ -100,9 +89,9 @@ def _extract_text_from_pdf(
 ) -> str:
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     try:
-        text_layer = "\n".join(page.get_text("text") for page in doc)
-        if not force_ocr and _is_text_sufficient(text_layer):
-            return text_layer
+        md_text = "" if force_ocr else pymupdf4llm.to_markdown(doc)
+        if not force_ocr and _is_text_sufficient(md_text):
+            return md_text
 
         pages = min(MAX_OCR_PAGES, doc.page_count)
         ocr_parts: list[str] = []
@@ -114,9 +103,7 @@ def _extract_text_from_pdf(
                 ocr_parts.append(ocr_text)
 
         combined_ocr = "\n\n".join(part for part in ocr_parts if part.strip())
-        if combined_ocr.strip():
-            return combined_ocr
-        return text_layer
+        return combined_ocr or md_text
     finally:
         doc.close()
 
@@ -174,7 +161,7 @@ def extract_text_from_upload(
     else:
         raise ValueError(f"Unsupported file format: {filename}")
 
-    normalized = _normalize_text(_correct_ocr_errors(raw_text))
+    normalized = _normalize_text(raw_text)
     if not normalized:
         raise ValueError(f"Could not extract text from file: {filename}")
     return normalized
