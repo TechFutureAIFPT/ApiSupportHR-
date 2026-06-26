@@ -122,6 +122,7 @@ class SettingsApiTests(unittest.TestCase):
             json={
                 "workflow": {
                     "newSessionMode": "keep-config",
+                    "autoFillHardFiltersOnContinue": True,
                     "fixedJD": {
                         "enabled": True,
                         "name": "Backend Developer",
@@ -147,6 +148,7 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["workflow"]["newSessionMode"], "keep-config")
+        self.assertTrue(payload["workflow"]["autoFillHardFiltersOnContinue"])
         self.assertEqual(payload["workflow"]["fixedJD"]["name"], "Backend Developer")
         self.assertEqual(payload["workflow"]["fixedJD"]["jdText"], "Python, FastAPI, PostgreSQL")
         self.assertTrue(payload["workflow"]["fixedJD"]["enabled"])
@@ -155,6 +157,7 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(payload["workflow"]["fixedJD"]["hardFilters"]["location"], "Hà Nội")
 
         stored = self.fake_user_settings.store["user-123"]["settings"]["workflow"]["fixedJD"]
+        self.assertTrue(self.fake_user_settings.store["user-123"]["settings"]["workflow"]["autoFillHardFiltersOnContinue"])
         self.assertTrue(stored["enabled"])
         self.assertEqual(stored["name"], "Backend Developer")
         self.assertEqual(stored["jdText"], "Python, FastAPI, PostgreSQL")

@@ -76,6 +76,7 @@ def default_user_settings(user: AuthenticatedUser) -> dict[str, Any]:
             "restoreDraft": True,
             "rememberScoringConfig": True,
             "autoSaveHistory": True,
+            "autoFillHardFiltersOnContinue": False,
             "newSessionMode": "reset",
         },
         "notifications": {
@@ -130,6 +131,10 @@ def normalize_user_settings(raw: Any, user: AuthenticatedUser) -> dict[str, Any]
             "restoreDraft": _bool(workflow.get("restoreDraft"), defaults["workflow"]["restoreDraft"]),
             "rememberScoringConfig": _bool(workflow.get("rememberScoringConfig"), defaults["workflow"]["rememberScoringConfig"]),
             "autoSaveHistory": _bool(workflow.get("autoSaveHistory"), defaults["workflow"]["autoSaveHistory"]),
+            "autoFillHardFiltersOnContinue": _bool(
+                workflow.get("autoFillHardFiltersOnContinue"),
+                defaults["workflow"]["autoFillHardFiltersOnContinue"],
+            ),
             "newSessionMode": "keep-config" if new_session_mode == "keep-config" else "reset",
         },
         "notifications": {
