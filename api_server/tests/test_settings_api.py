@@ -116,6 +116,50 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(stored["uid"], "user-123")
         self.assertEqual(stored["settings"]["ui"]["theme"], "light")
 
+    def test_patch_settings_persists_fixed_jd_workflow_config(self) -> None:
+        response = self.client.patch(
+            "/api/account/settings",
+            json={
+                "workflow": {
+                    "newSessionMode": "keep-config",
+                    "fixedJD": {
+                        "enabled": True,
+                        "name": "Backend Developer",
+                        "jdText": "Python, FastAPI, PostgreSQL",
+                        "savedAt": 1782466563564,
+                        "scoringEnabled": True,
+                        "weights": {
+                            "jdFit": {
+                                "children": [
+                                    {"key": "overallFit", "weight": 20}
+                                ]
+                            }
+                        },
+                        "hardFilters": {
+                            "location": "Hà Nội",
+                            "locationMandatory": True,
+                        },
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["workflow"]["newSessionMode"], "keep-config")
+        self.assertEqual(payload["workflow"]["fixedJD"]["name"], "Backend Developer")
+        self.assertEqual(payload["workflow"]["fixedJD"]["jdText"], "Python, FastAPI, PostgreSQL")
+        self.assertTrue(payload["workflow"]["fixedJD"]["enabled"])
+        self.assertTrue(payload["workflow"]["fixedJD"]["scoringEnabled"])
+        self.assertEqual(payload["workflow"]["fixedJD"]["weights"]["jdFit"]["children"][0]["weight"], 20)
+        self.assertEqual(payload["workflow"]["fixedJD"]["hardFilters"]["location"], "Hà Nội")
+
+        stored = self.fake_user_settings.store["user-123"]["settings"]["workflow"]["fixedJD"]
+        self.assertTrue(stored["enabled"])
+        self.assertEqual(stored["name"], "Backend Developer")
+        self.assertEqual(stored["jdText"], "Python, FastAPI, PostgreSQL")
+        self.assertEqual(stored["hardFilters"]["location"], "Hà Nội")
+
     def test_reset_settings_restores_defaults_and_keeps_account_seed(self) -> None:
         self.client.patch(
             "/api/account/settings",

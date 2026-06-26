@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 from app.repositories.firestore import account_repository as repo
@@ -31,6 +32,28 @@ def _history_retention(value: Any, fallback: int = 50) -> int:
     except (TypeError, ValueError):
         return fallback
     return candidate if candidate in ALLOWED_HISTORY_RETENTION else fallback
+
+
+def _millis(value: Any, fallback: int) -> int:
+    if isinstance(value, (int, float)) and isfinite(value):
+        return int(value)
+    return fallback
+
+
+def _normalize_fixed_jd(value: Any) -> dict[str, Any] | None:
+    fixed_jd = _record(value)
+    if not fixed_jd:
+        return None
+
+    return {
+        "enabled": _bool(fixed_jd.get("enabled"), False),
+        "name": str(fixed_jd.get("name") or ""),
+        "jdText": str(fixed_jd.get("jdText") or "").strip(),
+        "savedAt": _millis(fixed_jd.get("savedAt"), _now_millis()),
+        "scoringEnabled": _bool(fixed_jd.get("scoringEnabled"), False),
+        "weights": deepcopy(_record(fixed_jd.get("weights"))) if isinstance(fixed_jd.get("weights"), dict) else None,
+        "hardFilters": deepcopy(_record(fixed_jd.get("hardFilters"))) if isinstance(fixed_jd.get("hardFilters"), dict) else None,
+    }
 
 
 def default_user_settings(user: AuthenticatedUser) -> dict[str, Any]:
@@ -86,8 +109,9 @@ def normalize_user_settings(raw: Any, user: AuthenticatedUser) -> dict[str, Any]
     new_session_mode = workflow.get("newSessionMode", defaults["workflow"]["newSessionMode"])
     theme = ui.get("theme", defaults["ui"]["theme"])
     language = ui.get("language", defaults["ui"]["language"])
+    fixed_jd = _normalize_fixed_jd(workflow.get("fixedJD"))
 
-    return {
+    normalized = {
         "version": SETTINGS_VERSION,
         "ui": {
             "sidebarDensity": "cozy" if density == "cozy" else "compact",
@@ -121,6 +145,11 @@ def normalize_user_settings(raw: Any, user: AuthenticatedUser) -> dict[str, Any]
             "lastSyncedAt": sync.get("lastSyncedAt") if isinstance(sync.get("lastSyncedAt"), (int, float)) else defaults["sync"]["lastSyncedAt"],
         },
     }
+
+    if fixed_jd is not None:
+        normalized["workflow"]["fixedJD"] = fixed_jd
+
+    return normalized
 
 
 def merge_user_settings(base: dict[str, Any], patch: dict[str, Any], user: AuthenticatedUser) -> dict[str, Any]:
