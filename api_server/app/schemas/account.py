@@ -17,6 +17,11 @@ class UserProfileUpsertRequest(BaseModel):
     displayName: str | None = None
     avatar: str | None = None
     provider: str | None = None
+    recruiterTitle: str | None = None
+    recruiterCompany: str | None = None
+    recruiterDepartment: str | None = None
+    recruiterPhone: str | None = None
+    emailSignature: str | None = None
 
 
 class UserAvatarUpdateRequest(BaseModel):

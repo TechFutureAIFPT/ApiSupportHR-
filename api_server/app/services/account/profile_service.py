@@ -37,6 +37,11 @@ def upsert_user_profile(
     display_name: str | None = None,
     avatar: str | None = None,
     provider: str | None = None,
+    recruiter_title: str | None = None,
+    recruiter_company: str | None = None,
+    recruiter_department: str | None = None,
+    recruiter_phone: str | None = None,
+    email_signature: str | None = None,
 ) -> dict[str, Any]:
     profile_ref = repo.users().document(user.uid)
     snapshot = profile_ref.get()
@@ -45,7 +50,7 @@ def upsert_user_profile(
     merged_name = display_name or user.display_name or current.get("displayName") or ""
     merged_avatar = avatar or user.photo_url or current.get("avatar") or ""
 
-    payload = {
+    payload: dict[str, Any] = {
         "uid": user.uid,
         "email": merged_email,
         "displayName": merged_name,
@@ -53,6 +58,21 @@ def upsert_user_profile(
         "provider": provider or current.get("provider") or "",
         "updatedAt": repo.server_timestamp(),
     }
+
+    current_recruiter = current.get("recruiterInfo") or {}
+    recruiter_update: dict[str, Any] = {}
+    if recruiter_title is not None:
+        recruiter_update["title"] = recruiter_title
+    if recruiter_company is not None:
+        recruiter_update["company"] = recruiter_company
+    if recruiter_department is not None:
+        recruiter_update["department"] = recruiter_department
+    if recruiter_phone is not None:
+        recruiter_update["phone"] = recruiter_phone
+    if email_signature is not None:
+        recruiter_update["emailSignature"] = email_signature
+    if recruiter_update:
+        payload["recruiterInfo"] = {**current_recruiter, **recruiter_update}
 
     if snapshot.exists:
         profile_ref.set(payload, merge=True)

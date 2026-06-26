@@ -29,6 +29,11 @@ def upsert_profile(payload: UserProfileUpsertRequest, current_user: Authenticate
         display_name=payload.displayName,
         avatar=payload.avatar,
         provider=payload.provider,
+        recruiter_title=payload.recruiterTitle,
+        recruiter_company=payload.recruiterCompany,
+        recruiter_department=payload.recruiterDepartment,
+        recruiter_phone=payload.recruiterPhone,
+        email_signature=payload.emailSignature,
     )
 
 
