@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.routes.account.chatbot import router as chatbot_router
+from app.api.routes.account.email import router as email_router
 from app.api.routes.account.google_drive import router as google_drive_router
 from app.api.routes.account.history import router as history_router
 from app.api.routes.account.notifications import router as notifications_router
@@ -23,5 +24,6 @@ router.include_router(uploaded_files_router)
 router.include_router(templates_router)
 router.include_router(chatbot_router)
 router.include_router(google_drive_router)
+router.include_router(email_router)
 
 __all__ = ["router"]
