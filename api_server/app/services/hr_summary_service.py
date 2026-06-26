@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import re
 import unicodedata
 from typing import Any, Dict, List
@@ -150,11 +151,83 @@ def _skill_status(skill: str, evidence: str) -> str:
     return "Đạt một phần"
 
 
+def _detect_job_hopping(cv_text: str) -> str | None:
+    """Phát hiện nhảy việc: >3 vị trí trong 5 năm với thời gian trung bình <18 tháng."""
+    pattern = re.compile(
+        r"(\d{4})\s*[-–—]+\s*(\d{4}|hiện tại|present|nay|now)",
+        re.IGNORECASE,
+    )
+    matches = pattern.findall(cv_text or "")
+    if len(matches) < 3:
+        return None
+
+    current_year = datetime.datetime.now().year
+    tenures: list[int] = []
+    for start_str, end_str in matches:
+        try:
+            start = int(start_str)
+            end = current_year if end_str.lower() in ("hiện tại", "present", "nay", "now") else int(end_str)
+            if 1990 <= start <= current_year and start <= end <= current_year + 1:
+                tenures.append(max(1, (end - start) * 12))
+        except ValueError:
+            continue
+
+    if len(tenures) < 3:
+        return None
+
+    avg_months = sum(tenures) / len(tenures)
+    span_years = sum(tenures) / 12
+
+    if avg_months < 18 and span_years <= 6:
+        return (
+            f"Phát hiện {len(tenures)} vị trí trong ~{span_years:.0f} năm "
+            f"(trung bình ~{round(avg_months)} tháng/vị trí) — dấu hiệu hay thay đổi công ty."
+        )
+    return None
+
+
+def _detect_career_gap(cv_text: str) -> str | None:
+    """Phát hiện khoảng trống nghề nghiệp >12 tháng giữa các vị trí liên tiếp."""
+    pattern = re.compile(r"(\d{4})\s*[-–—]+\s*(\d{4})")
+    matches = pattern.findall(cv_text or "")
+    if len(matches) < 2:
+        return None
+
+    current_year = datetime.datetime.now().year
+    periods: list[tuple[int, int]] = []
+    for start_str, end_str in matches:
+        try:
+            start, end = int(start_str), int(end_str)
+            if 1990 <= start <= current_year and start <= end <= current_year + 1:
+                periods.append((start, end))
+        except ValueError:
+            continue
+
+    if len(periods) < 2:
+        return None
+
+    periods_sorted = sorted(set(periods), key=lambda x: x[0])
+    max_gap = 0
+    gap_label = ""
+    for i in range(1, len(periods_sorted)):
+        gap = (periods_sorted[i][0] - periods_sorted[i - 1][1]) * 12
+        if gap > max_gap:
+            max_gap = gap
+            gap_label = f"{periods_sorted[i - 1][1]}–{periods_sorted[i][0]}"
+
+    if max_gap > 12:
+        yrs, mths = max_gap // 12, max_gap % 12
+        duration = f"~{yrs} năm" if mths == 0 else f"~{yrs} năm {mths} tháng"
+        return f"Khoảng trống nghề nghiệp {duration} ({gap_label}) — chưa có giải thích trong hồ sơ."
+    return None
+
+
 def _build_red_flags(
     candidate: Dict[str, Any],
     screening_summary: Dict[str, Any],
     required_years_text: str,
     experience_conclusion: str,
+    cv_text: str = "",
 ) -> List[str]:
     red_flags: List[str] = []
 
@@ -176,6 +249,14 @@ def _build_red_flags(
         message = f"Kinh nghiệm thực tế thấp hơn yêu cầu {required_years_text}."
         if message not in red_flags:
             red_flags.append(message)
+
+    hopping = _detect_job_hopping(cv_text)
+    if hopping and hopping not in red_flags:
+        red_flags.append(hopping)
+
+    gap = _detect_career_gap(cv_text)
+    if gap and gap not in red_flags:
+        red_flags.append(gap)
 
     return red_flags[:5]
 
@@ -227,7 +308,7 @@ def build_hr_summary(
             }
         )
 
-    red_flags = _build_red_flags(candidate, screening_summary, required_years_text, experience_result)
+    red_flags = _build_red_flags(candidate, screening_summary, required_years_text, experience_result, cv_text)
     overview = _build_overview(candidate, profile, red_flags, skill_rows)
     raw_score = existing.get("tong_diem_phu_hop")
     if isinstance(raw_score, (int, float)):

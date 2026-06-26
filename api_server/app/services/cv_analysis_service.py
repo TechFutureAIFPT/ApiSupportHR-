@@ -123,8 +123,78 @@ def _build_compact_criteria(weights: Dict[str, Any]) -> str:
                     total_weight += child.get("weight", 0) or 0
         else:
             total_weight = criterion.get("weight", 0) or 0
-        lines.append(f"{name}: {total_weight}%")
+        lines.append(f"**{name}** — tổng {total_weight}%")
+        if isinstance(children, list):
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                child_name = child.get("name") or ""
+                child_weight = child.get("weight") or 0
+                child_desc = child.get("description") or ""
+                if child_name:
+                    sub_line = f"  - {child_name}: {child_weight}%"
+                    if child_desc:
+                        sub_line += f" ({child_desc})"
+                    lines.append(sub_line)
     return "\n".join(lines)
+
+
+# Normalized section names for CV Markdown structuring (Vietnamese without accents + English)
+_CV_SECTION_NAMES: frozenset[str] = frozenset({
+    "kinh nghiem lam viec", "kinh nghiem", "trai nghiem nghe nghiep",
+    "hoc van", "trinh do hoc van", "bang cap", "hoc tap",
+    "ky nang", "ky nang chuyen mon", "ky nang ky thuat", "nang luc chuyen mon",
+    "du an", "du an noi bat", "cac du an", "du an tieu bieu", "du an ca nhan",
+    "chung chi", "chung nhan", "bang chung chi", "chung chi nghe nghiep",
+    "thanh tich", "thanh tuu", "giai thuong", "thanh qua dat duoc",
+    "muc tieu nghe nghiep", "muc tieu", "muc tieu ca nhan",
+    "tom tat", "gioi thieu ban than", "gioi thieu", "tong quan ca nhan",
+    "hoat dong", "hoat dong ngoai khoa", "tham gia cong dong",
+    "thong tin ca nhan", "thong tin lien lac", "thong tin",
+    "lien he", "so thich", "ngoai ngu", "ngon ngu",
+    "nguoi tham chieu", "tham chieu",
+    "experience", "work experience", "professional experience", "employment history",
+    "education", "academic background", "academic qualifications",
+    "skills", "technical skills", "core competencies", "key skills", "professional skills",
+    "projects", "key projects", "notable projects", "personal projects",
+    "certifications", "certificates", "licenses",
+    "achievements", "accomplishments", "awards", "honors",
+    "objective", "career objective", "professional objective",
+    "summary", "professional summary", "executive summary", "profile",
+    "about me", "about",
+    "activities", "extracurricular activities",
+    "references", "referee",
+    "contact", "personal information",
+    "interests", "hobbies", "languages", "language skills",
+    "volunteer", "volunteer work",
+})
+
+
+def _normalize_section_key(text: str) -> str:
+    """Strip accents and lowercase for section header matching."""
+    nfd = unicodedata.normalize("NFD", text.lower())
+    return re.sub(r"[^a-z0-9 ]", "", "".join(c for c in nfd if unicodedata.category(c) != "Mn")).strip()
+
+
+def _format_cv_as_markdown(file_name: str, cv_text: str) -> str:
+    """Convert raw OCR CV text to lightly structured Markdown for better AI section parsing."""
+    lines = cv_text.split("\n")
+    out: List[str] = [f"## CV: {file_name}\n"]
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            out.append("")
+            continue
+        is_header = False
+        word_count = len(stripped.split())
+        if 1 <= word_count <= 8 and len(stripped) <= 65:
+            key = _normalize_section_key(stripped.rstrip(":.-"))
+            if key in _CV_SECTION_NAMES:
+                is_header = True
+            elif stripped.isupper() and not re.search(r"\d{4}", stripped):
+                is_header = True
+        out.append(f"\n### {stripped}" if is_header else line)
+    return "\n".join(out)
 
 
 def _normalize_criterion_name(value: str) -> str:
@@ -180,9 +250,7 @@ def _extract_criterion_specs(weights: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _format_score_value(value: float) -> str:
-    if abs(value - round(value)) < 1e-9:
-        return str(int(round(value)))
-    return f"{value:.2f}".rstrip("0").rstrip(".")
+    return str(math.ceil(value))
 
 
 def _analysis_response_schema() -> dict[str, Any]:
@@ -756,7 +824,7 @@ def build_rule_based_fallback_candidates(
                 hard_filters=hard_filters,
             )
             max_score = float(spec.get("max_score") or 0)
-            earned = max(0.0, min(max_score, round(earned, 1)))
+            earned = float(max(0, min(math.ceil(max_score), math.ceil(earned))))
             total_score += earned
             details.append(
                 _detail_item(
@@ -768,7 +836,7 @@ def build_rule_based_fallback_candidates(
                 )
             )
 
-        total_score = max(0.0, min(100.0, round(total_score, 1)))
+        total_score = float(max(0, min(100, math.ceil(total_score))))
         rank = "A" if total_score >= 75 else "B" if total_score >= 50 else "C"
         analysis: Dict[str, Any] = {
             "Tong diem": total_score,
@@ -1269,8 +1337,8 @@ def build_advanced_score_breakdown(detail: dict[str, Any], *, jd_text: str, cv_t
     )
 
     return {
-        "max_possible_score": round(float(existing.get("max_possible_score") or max_score), 1),
-        "raw_score_earned": round(float(existing.get("raw_score_earned") or raw_score), 1),
+        "max_possible_score": float(math.ceil(float(existing.get("max_possible_score") or max_score))),
+        "raw_score_earned": float(math.ceil(float(existing.get("raw_score_earned") or raw_score))),
         "mathematical_formula": mathematical_formula,
         "deductions": deductions,
         "bonuses_earned": bonuses,
@@ -1491,6 +1559,16 @@ def _ensure_analysis_shape(candidate: Dict[str, Any], criterion_specs: List[Dict
 
     analysis["Chi tiet"] = normalized_details
     analysis["Chi tiết"] = normalized_details
+
+    for key in ("Tong diem", "Tổng điểm"):
+        raw = analysis.get(key)
+        if raw is not None:
+            try:
+                ceiled = max(0, min(100, math.ceil(float(raw))))
+                analysis[key] = ceiled
+            except (TypeError, ValueError):
+                pass
+
     return candidate
 
 
@@ -1580,7 +1658,7 @@ def _create_analysis_prompt(
     *,
     context_notes: str = "",
 ) -> str:
-    compact_jd = " ".join(jd_text.split())[:5000]
+    compact_jd = re.sub(r"\n{3,}", "\n\n", jd_text.strip())[:6000]
     compact_weights = _build_compact_criteria(weights)
     role_profile = resolve_role_profile(
         jd_text=jd_text,
@@ -1603,7 +1681,11 @@ def _create_analysis_prompt(
     )
 
 
-def _analysis_generation_config(*, include_schema: bool) -> dict[str, Any]:
+def _analysis_generation_config(
+    *,
+    include_schema: bool,
+    system_instruction: str | None = None,
+) -> dict[str, Any]:
     config: dict[str, Any] = {
         "responseMimeType": "application/json",
         "temperature": 0.1,
@@ -1612,6 +1694,8 @@ def _analysis_generation_config(*, include_schema: bool) -> dict[str, Any]:
     }
     if include_schema:
         config["responseSchema"] = _analysis_response_schema()
+    if system_instruction:
+        config["systemInstruction"] = system_instruction
     return config
 
 
@@ -1647,10 +1731,10 @@ def _build_prompt_sections(
         if few_shot_examples:
             prompt_sections.append(f"--- FEW-SHOT GROUNDING: {file_name} ---\n{few_shot_examples}")
 
-        if analysis_text.startswith("--- CV:"):
+        if analysis_text.startswith("--- CV:") or analysis_text.startswith("## CV:"):
             prompt_sections.append(analysis_text)
         else:
-            prompt_sections.append(f"--- CV: {file_name} ---\n{analysis_text}")
+            prompt_sections.append(_format_cv_as_markdown(file_name, analysis_text))
 
     return prompt_sections
 
@@ -1673,20 +1757,23 @@ def analyze_cv_entries(
         entry_contexts=entry_contexts,
         context_notes=context_notes,
     )
-    prompt_text = "\n\n".join(prompt_sections)
+    # Tách instructions + JD (section[0]) ra system_instruction để Gemini tuân thủ chặt hơn.
+    # Các section CV (section[1:]) đi vào contents như dữ liệu phân tích.
+    system_prompt = prompt_sections[0]
+    cv_contents = "\n\n".join(prompt_sections[1:]) if len(prompt_sections) > 1 else ""
 
     try:
         response_text = generate_content(
             settings.gemini_cv_analysis_model,
-            prompt_text,
-            _analysis_generation_config(include_schema=True),
+            cv_contents,
+            _analysis_generation_config(include_schema=True, system_instruction=system_prompt),
         )
     except Exception as error:
         print(f"[CV Analysis] Schema-guided generation failed, retrying JSON-only mode: {error}")
         response_text = generate_content(
             settings.gemini_cv_analysis_model,
-            prompt_text,
-            _analysis_generation_config(include_schema=False),
+            cv_contents,
+            _analysis_generation_config(include_schema=False, system_instruction=system_prompt),
         )
 
     cv_text_map = {str(entry.get("file_name") or ""): str(entry.get("text") or "") for entry in cv_entries}
@@ -1717,22 +1804,23 @@ async def analyze_cv_entries_async(
         entry_contexts=entry_contexts,
         context_notes=context_notes,
     )
-    prompt_text = "\n\n".join(prompt_sections)
+    system_prompt = prompt_sections[0]
+    cv_contents = "\n\n".join(prompt_sections[1:]) if len(prompt_sections) > 1 else ""
 
     try:
         response_text = await asyncio.to_thread(
             generate_content,
             settings.gemini_cv_analysis_model,
-            prompt_text,
-            _analysis_generation_config(include_schema=True),
+            cv_contents,
+            _analysis_generation_config(include_schema=True, system_instruction=system_prompt),
         )
     except Exception as error:
         print(f"[CV Analysis] Async schema-guided generation failed, retrying JSON-only mode: {error}")
         response_text = await asyncio.to_thread(
             generate_content,
             settings.gemini_cv_analysis_model,
-            prompt_text,
-            _analysis_generation_config(include_schema=False),
+            cv_contents,
+            _analysis_generation_config(include_schema=False, system_instruction=system_prompt),
         )
 
     cv_text_map = {str(entry.get("file_name") or ""): str(entry.get("text") or "") for entry in cv_entries}
