@@ -710,6 +710,22 @@ def _extract_phone(text: str) -> str:
     return re.sub(r"\s+", " ", match.group(0)).strip() if match else ""
 
 
+_SOFT_CRITERION_TERMS = frozenset({
+    "van hoa", "chuyen nghiep", "gan bo", "thai do", "ngo giao",
+    "tinh than", "soft", "phu hop van", "communication",
+})
+
+_BEHAVIORAL_SIGNALS = [
+    "giao tiếp", "hợp tác", "linh hoạt", "chủ động", "tinh thần",
+    "trách nhiệm", "chuyên nghiệp", "cởi mở", "teamwork", "proactive",
+    "sáng tạo", "tích cực", "nhiệt tình", "thích nghi", "kỷ luật",
+]
+
+
+def _is_soft_criterion(normalized: str) -> bool:
+    return any(t in normalized for t in _SOFT_CRITERION_TERMS)
+
+
 def _fallback_criterion_score(
     spec: Dict[str, Any],
     *,
@@ -738,15 +754,27 @@ def _fallback_criterion_score(
                 str(item.get("keyword"))
                 for item in metrics["keywords_list"]
                 if isinstance(item, dict) and item.get("status") == "missing"
-            ][:8]
+            ][:5]
         else:
-            ratio, matched_terms, missing_terms = _text_overlap_ratio(jd_text, cv_text)
-        evidence = f"Khớp {matched}/{required} keyword JD" if required else f"Khớp nội dung JD/CV {round(ratio * 100)}%"
+            ratio, _m, _x = _text_overlap_ratio(jd_text, cv_text)
+            matched_terms, missing_terms = [], []
+        score = max_score * min(1.0, ratio)
+        formula = (
+            f"max={max_score:.0f}đ × ({matched}/{required} từ khóa khớp) = {score:.1f}đ"
+            if required else
+            f"max={max_score:.0f}đ × {ratio:.0%} (độ khớp nội dung) = {score:.1f}đ"
+        )
         if matched_terms:
-            evidence += f": {', '.join(matched_terms)}"
-        if missing_terms:
-            evidence += f" | Thiếu: {', '.join(missing_terms[:5])}"
-        return max_score * min(1.0, ratio), evidence, "Keyword overlap fallback", "Fallback scoring dùng keyword và nội dung JD/CV khi AI generation tạm thời lỗi."
+            evidence = f"Từ khóa JD tìm thấy trong CV ({matched}/{required}): {', '.join(matched_terms)}."
+            if missing_terms:
+                evidence += f" Còn thiếu: {', '.join(missing_terms)}."
+        else:
+            evidence = f"Độ khớp từ khóa JD/CV: {round(ratio * 100)}%."
+        explanation = (
+            f"Chấm điểm tạm thời dựa trên độ khớp từ khóa JD/CV ({matched}/{required} từ khóa)."
+            " Kết quả chính xác hơn khi phân tích AI đầy đủ được thực hiện."
+        )
+        return score, evidence, formula, explanation
 
     if any(term in normalized for term in ("ky nang", "skill", "technical")):
         metrics = _keyword_metrics(jd_text, cv_text, name)
@@ -758,42 +786,102 @@ def _fallback_criterion_score(
             for item in metrics.get("keywords_list", [])
             if isinstance(item, dict) and item.get("status") == "matched"
         ][:8]
-        evidence = f"Khớp {matched}/{required} kỹ năng yêu cầu"
+        missing_terms = [
+            str(item.get("keyword"))
+            for item in metrics.get("keywords_list", [])
+            if isinstance(item, dict) and item.get("status") == "missing"
+        ][:5]
+        score = max_score * ratio
+        formula = (
+            f"max={max_score:.0f}đ × ({matched}/{required} kỹ năng kỹ thuật) = {score:.1f}đ"
+            if required else
+            f"max={max_score:.0f}đ × {ratio:.2f} (từ khóa kỹ thuật phát hiện) = {score:.1f}đ"
+        )
         if matched_terms:
-            evidence += f": {', '.join(matched_terms)}"
-        return max_score * ratio, evidence, "Skill keyword fallback", "Chấm điểm dựa trên kỹ năng xuất hiện trong JD và CV."
+            evidence = f"Kỹ năng khớp ({matched}/{required}): {', '.join(matched_terms)}."
+            if missing_terms:
+                evidence += f" Cần bổ sung: {', '.join(missing_terms)}."
+        else:
+            evidence = "Chưa tìm thấy kỹ năng kỹ thuật khớp với JD trong CV."
+        explanation = f"Kỹ năng kỹ thuật: khớp {matched}/{required} từ khóa JD. Cần bổ sung thêm từ khóa cốt lõi để tăng điểm."
+        return score, evidence, formula, explanation
 
     if any(term in normalized for term in ("kinh nghiem", "experience", "seniority")):
         cv_years = _extract_year_count(cv_text)
         min_years = _extract_min_year_count(hard_filters, jd_text)
         ratio = min(1.0, cv_years / min_years) if min_years > 0 and cv_years > 0 else (0.65 if cv_years > 0 else 0.25)
-        evidence = f"CV có khoảng {_format_score_value(cv_years)} năm; yêu cầu {_format_score_value(min_years)} năm."
-        return max_score * ratio, evidence, "Experience fallback", "Chấm điểm dựa trên số năm kinh nghiệm tìm thấy trong CV/JD."
+        score = max_score * ratio
+        formula = (
+            f"max={max_score:.0f}đ × min(1.0, {cv_years:.1f}yr ÷ {min_years:.1f}yr) = {score:.1f}đ"
+            if min_years > 0 else
+            f"max={max_score:.0f}đ × {ratio:.2f} (kinh nghiệm ước tính) = {score:.1f}đ"
+        )
+        evidence = f"CV thể hiện khoảng {_format_score_value(cv_years)} năm kinh nghiệm; JD yêu cầu tối thiểu {_format_score_value(min_years)} năm."
+        explanation = (
+            "Số năm kinh nghiệm đáp ứng hoặc vượt yêu cầu JD." if ratio >= 1.0
+            else f"Số năm kinh nghiệm trong CV ({cv_years:.1f} năm) chưa đạt yêu cầu tối thiểu ({min_years:.1f} năm)."
+        )
+        return score, evidence, formula, explanation
 
     if any(term in normalized for term in ("hoc van", "education", "degree")):
-        ratio, evidence = _education_ratio(cv_text)
-        return max_score * ratio, evidence, "Education fallback", "Chấm điểm dựa trên dấu hiệu bằng cấp/chứng chỉ trong CV."
+        ratio, edu_evidence = _education_ratio(cv_text)
+        score = max_score * ratio
+        formula = f"max={max_score:.0f}đ × {ratio:.2f} (bằng cấp + chứng chỉ) = {score:.1f}đ"
+        if edu_evidence and "Không" not in edu_evidence:
+            evidence = f"Phát hiện dấu hiệu học vấn/chứng chỉ: {edu_evidence}."
+        else:
+            evidence = edu_evidence
+        explanation = "Điểm học vấn dựa trên bằng cấp, chứng chỉ và chuyên ngành tìm thấy trong CV."
+        return score, evidence, formula, explanation
 
     if any(term in normalized for term in ("thanh tich", "kpi", "achievement", "impact")):
         signal_count = _metric_signal_count(cv_text)
         ratio = min(1.0, signal_count / 3)
-        evidence = f"Tìm thấy {signal_count} dấu hiệu KPI/thành tích trong CV."
-        return max_score * ratio, evidence, "Achievement fallback", "Chấm điểm dựa trên số liệu, KPI và động từ hành động."
+        score = max_score * ratio
+        formula = f"max={max_score:.0f}đ × min(1.0, {signal_count}/3 tín hiệu KPI) = {score:.1f}đ"
+        evidence = f"Tìm thấy {signal_count} dấu hiệu KPI/thành tích rõ ràng trong CV."
+        explanation = (
+            "CV có KPI và thành tích cụ thể, đáng tin cậy." if signal_count >= 3
+            else f"Chỉ tìm thấy {signal_count}/3 dấu hiệu KPI rõ ràng. Cần bổ sung kết quả đo lường được (số liệu, phần trăm, v.v.)."
+        )
+        return score, evidence, formula, explanation
 
     if _is_language_criterion(name):
-        ratio, matched, missing = _language_ratio(jd_text, cv_text, name)
-        evidence = "Ngôn ngữ khớp: " + (", ".join(matched) if matched else "chưa rõ")
-        if missing:
-            evidence += f" | Thiếu: {', '.join(missing)}"
-        return max_score * ratio, evidence, "Language fallback", "Chấm điểm dựa trên ngôn ngữ/chứng chỉ tìm thấy trong CV."
+        ratio, matched_langs, missing_langs = _language_ratio(jd_text, cv_text, name)
+        total_langs = len(matched_langs) + len(missing_langs)
+        score = max_score * ratio
+        formula = f"max={max_score:.0f}đ × ({len(matched_langs)}/{max(1, total_langs)} ngôn ngữ) = {score:.1f}đ"
+        evidence = "Ngôn ngữ tìm thấy: " + (", ".join(matched_langs) if matched_langs else "chưa rõ")
+        if missing_langs:
+            evidence += f". Còn thiếu: {', '.join(missing_langs)}."
+        explanation = "Điểm ngôn ngữ dựa trên ngoại ngữ và chứng chỉ ngôn ngữ tìm thấy trong CV."
+        return score, evidence, formula, explanation
+
+    if _is_soft_criterion(normalized):
+        behavioral_found = [sig for sig in _BEHAVIORAL_SIGNALS if sig.lower() in cv_text.lower()]
+        behavioral_count = len(behavioral_found)
+        ratio = min(1.0, behavioral_count / 2)
+        score = max_score * ratio
+        formula = f"max={max_score:.0f}đ × min(1.0, {behavioral_count}/2 tín hiệu hành vi) = {score:.1f}đ"
+        if behavioral_found:
+            evidence = f"Tín hiệu hành vi tìm thấy ({behavioral_count}): {', '.join(behavioral_found[:5])}."
+        else:
+            evidence = "Chưa tìm thấy tín hiệu hành vi rõ ràng trong CV (giao tiếp, hợp tác, chủ động, v.v.)."
+        explanation = (
+            "Tiêu chí mềm: 2 tín hiệu hành vi là đủ điểm tối đa. Đạt yêu cầu." if ratio >= 1.0
+            else "Tiêu chí mềm: cần ít nhất 2 tín hiệu hành vi rõ ràng. Nên bổ sung ví dụ cụ thể về giao tiếp, hợp tác hoặc chủ động."
+        )
+        return score, evidence, formula, explanation
 
     ratio, matched_terms, missing_terms = _text_overlap_ratio(jd_text, cv_text)
-    evidence = f"Khớp text JD/CV {round(ratio * 100)}%"
+    final_ratio = min(1.0, max(0.25, ratio))
+    score = max_score * final_ratio
+    formula = f"max={max_score:.0f}đ × {final_ratio:.0%} (độ phủ nội dung) = {score:.1f}đ"
+    evidence = f"Độ khớp nội dung JD/CV: {round(ratio * 100)}%."
     if matched_terms:
-        evidence += f": {', '.join(matched_terms[:6])}"
-    if missing_terms:
-        evidence += f" | Thiếu: {', '.join(missing_terms[:4])}"
-    return max_score * min(1.0, max(0.25, ratio)), evidence, "Generic fallback", "Chấm điểm tạm thời dựa trên độ khớp nội dung."
+        evidence += f" Nội dung liên quan phát hiện: {', '.join(matched_terms[:5])}."
+    explanation = "Chấm điểm tạm thời dựa trên độ phủ từ khóa giữa JD và CV. Kết quả chính xác hơn khi phân tích AI đầy đủ được thực hiện."
+    return score, evidence, formula, explanation
 
 
 def build_rule_based_fallback_candidates(
@@ -1245,6 +1333,8 @@ def _build_improvement_suggestion(
 def _is_weak_formula(value: str) -> bool:
     normalized = _normalize_lookup(value)
     if not normalized:
+        return True
+    if "fallback" in normalized:
         return True
     return "trong so" in normalized and not any(symbol in value for symbol in ("-", "+", "="))
 
