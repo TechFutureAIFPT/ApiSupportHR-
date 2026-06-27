@@ -10,7 +10,7 @@ PROMPTS_ROOT = Path(__file__).resolve().parent
 ACTIVE_PROMPT_VERSIONS: dict[str, str] = {
     "candidate_refinement/education_validation": "v1",
     "candidate_refinement/refine_name": "v1",
-    "cv_analysis/analyze_entries": "v6",
+    "cv_analysis/analyze_entries": "v7",
     "file_extraction/ocr_document": "v1",
     "mobile_jd/standardize": "v1",
     "workflow/extract_hard_filters": "v1",

@@ -30,17 +30,18 @@ class Settings:
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
         self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.gemini_cv_analysis_model = (
-            os.getenv("GEMINI_CV_ANALYSIS_MODEL", "gemini-2.5-flash").strip()
+            os.getenv("GEMINI_CV_ANALYSIS_MODEL", "gemini-2.5-pro").strip()
             or self.gemini_default_model
         )
         self.quick_cv_gemini_model = (
-            os.getenv("QUICK_CV_GEMINI_MODEL", self.gemini_cv_analysis_model).strip()
+            os.getenv("QUICK_CV_GEMINI_MODEL", "gemini-2.5-flash").strip()
             or self.gemini_cv_analysis_model
         )
         self.mobile_jd_gemini_model = (
-            os.getenv("MOBILE_JD_GEMINI_MODEL", self.gemini_default_model).strip()
+            os.getenv("MOBILE_JD_GEMINI_MODEL", "gemini-2.5-flash").strip()
             or self.gemini_default_model
         )
+        self.gemini_thinking_budget = int(os.getenv("GEMINI_THINKING_BUDGET", "8000"))
         raw_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "").strip()
         if raw_embedding_model in {"", "text-embedding-004", "models/text-embedding-004"}:
             # Migrate legacy/default values to the current supported Gemini embedding model.

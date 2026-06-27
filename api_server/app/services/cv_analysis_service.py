@@ -1685,6 +1685,7 @@ def _analysis_generation_config(
     *,
     include_schema: bool,
     system_instruction: str | None = None,
+    model_name: str = "",
 ) -> dict[str, Any]:
     config: dict[str, Any] = {
         "responseMimeType": "application/json",
@@ -1692,6 +1693,10 @@ def _analysis_generation_config(
         "topP": 0.8,
         "topK": 40,
     }
+    if "pro" in model_name.lower():
+        thinking_budget = get_settings().gemini_thinking_budget
+        if thinking_budget > 0:
+            config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
     if include_schema:
         config["responseSchema"] = _analysis_response_schema()
     if system_instruction:
@@ -1766,14 +1771,14 @@ def analyze_cv_entries(
         response_text = generate_content(
             settings.gemini_cv_analysis_model,
             cv_contents,
-            _analysis_generation_config(include_schema=True, system_instruction=system_prompt),
+            _analysis_generation_config(include_schema=True, system_instruction=system_prompt, model_name=settings.gemini_cv_analysis_model),
         )
     except Exception as error:
         print(f"[CV Analysis] Schema-guided generation failed, retrying JSON-only mode: {error}")
         response_text = generate_content(
             settings.gemini_cv_analysis_model,
             cv_contents,
-            _analysis_generation_config(include_schema=False, system_instruction=system_prompt),
+            _analysis_generation_config(include_schema=False, system_instruction=system_prompt, model_name=settings.gemini_cv_analysis_model),
         )
 
     cv_text_map = {str(entry.get("file_name") or ""): str(entry.get("text") or "") for entry in cv_entries}
@@ -1812,7 +1817,7 @@ async def analyze_cv_entries_async(
             generate_content,
             settings.gemini_cv_analysis_model,
             cv_contents,
-            _analysis_generation_config(include_schema=True, system_instruction=system_prompt),
+            _analysis_generation_config(include_schema=True, system_instruction=system_prompt, model_name=settings.gemini_cv_analysis_model),
         )
     except Exception as error:
         print(f"[CV Analysis] Async schema-guided generation failed, retrying JSON-only mode: {error}")
@@ -1820,7 +1825,7 @@ async def analyze_cv_entries_async(
             generate_content,
             settings.gemini_cv_analysis_model,
             cv_contents,
-            _analysis_generation_config(include_schema=False, system_instruction=system_prompt),
+            _analysis_generation_config(include_schema=False, system_instruction=system_prompt, model_name=settings.gemini_cv_analysis_model),
         )
 
     cv_text_map = {str(entry.get("file_name") or ""): str(entry.get("text") or "") for entry in cv_entries}

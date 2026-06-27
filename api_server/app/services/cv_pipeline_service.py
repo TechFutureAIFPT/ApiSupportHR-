@@ -212,6 +212,10 @@ def _build_global_context_notes() -> str:
 def _format_routing_metadata_note(metadata: dict[str, Any]) -> str:
     routing = metadata.get("routing_analysis") if isinstance(metadata.get("routing_analysis"), dict) else {}
     match = metadata.get("mathematical_match") if isinstance(metadata.get("mathematical_match"), dict) else {}
+    vocab_sim = float(match.get("vocab_similarity_score") or 0.0)
+    confidence = float(routing.get("confidence_score") or 0.0)
+    # PKL score pre-computed server-side (max 20): vocab_sim 60% + confidence 40%
+    pkl_computed_score = round(min(20.0, vocab_sim * 12.0 + confidence * 8.0), 2)
     found = ", ".join(str(item) for item in list(match.get("core_keywords_found") or [])[:8])
     missing = ", ".join(str(item) for item in list(match.get("missing_critical_keywords") or [])[:8])
     metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
@@ -220,11 +224,16 @@ def _format_routing_metadata_note(metadata: dict[str, Any]) -> str:
         f"{metadata_json}\n"
         "Diễn giải nhanh cho bước phân tích:\n"
         f"- Ngành dự đoán: {routing.get('predicted_industry') or 'unknown'} "
-        f"(độ tin cậy {routing.get('confidence_score') or 0}).\n"
-        f"- Độ tương đồng từ vựng TF-IDF giữa JD và CV: {match.get('vocab_similarity_score') or 0.5}.\n"
+        f"(độ tin cậy {confidence}).\n"
+        f"- Độ tương đồng từ vựng TF-IDF giữa JD và CV: {vocab_sim}.\n"
         f"- Từ khóa lõi đã thấy: {found or 'không có'}.\n"
         f"- Từ khóa quan trọng còn thiếu: {missing or 'không có'}.\n"
-        "- Chỉ dùng metadata này làm mốc định lượng hỗ trợ; điểm cuối vẫn phải dựa trên bằng chứng trong JD và CV."
+        f"- ⚡ PKL COMPUTED SCORE (server đã tính): {pkl_computed_score}/20 "
+        f"(công thức: {vocab_sim}×12 + {confidence}×8 = {pkl_computed_score}).\n"
+        "  → Dùng con số này TRỰC TIẾP cho trường diemThuongTuTapMauHeThongPkl. "
+        "Không tự tính lại. Không tăng/giảm tùy ý.\n"
+        "- Chỉ dùng metadata này làm mốc định lượng hỗ trợ; các điểm khác vẫn phải "
+        "dựa trên bằng chứng trong JD và CV."
     )
 
 
