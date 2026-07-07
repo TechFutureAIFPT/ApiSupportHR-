@@ -5,6 +5,7 @@ from typing import Any
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
+from app.services.account import view_sync_service
 from app.services.account.shared import serialize, sorted_docs
 
 
@@ -134,8 +135,8 @@ def _normalize_feedback_payload(
         ),
     )
     metadata = _normalize_feedback_metadata(payload, current)
-    metadata["feedbackScope"] = "reusable-guidance" if is_reusable_guidance else "candidate-specific"
-    if "scoreDifference" not in metadata:
+    metadata["feedbackScope"] = "reusable-guidance" if is_reusable_guidance else "single-candidate"
+    if metadata.get("scoreDifference") is None:
         ai_score_value = _to_float(ai_score)
         final_score_value = _to_float(final_score)
         if ai_score_value is not None and final_score_value is not None:
@@ -179,6 +180,7 @@ def save_feedback(user: AuthenticatedUser, payload: dict[str, Any]) -> str:
     current = snapshot.to_dict() or {}
     normalized = _normalize_feedback_payload(user, payload, doc_id=doc_id, existing=current)
     doc_ref.set(normalized, merge=True)
+    view_sync_service.refresh_user_views(user, "feedback", rebuild_mobile_inbox=True)
     return doc_id
 
 
@@ -232,6 +234,7 @@ def delete_feedback(user: AuthenticatedUser, feedback_id: str) -> bool:
     if data.get("uid") != user.uid:
         return False
     snapshot.reference.delete()
+    view_sync_service.refresh_user_views(user, "feedback", rebuild_mobile_inbox=True)
     return True
 
 

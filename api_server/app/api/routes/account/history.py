@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from app.api.response_utils import cached_json_response
 from app.api.deps import get_current_user
 from app.schemas.account import (
     AnalysisFeedbackRequest,
@@ -11,6 +12,7 @@ from app.schemas.account import (
     HistorySaveRequest,
 )
 from app.services.account import feedback_service, history_service
+from app.services.account import response_cache_service
 
 
 router = APIRouter()
@@ -23,26 +25,36 @@ def save_history_session(payload: HistorySaveRequest, current_user: Authenticate
 
 @router.get("/history")
 def fetch_recent_history(
+    request: Request,
     limit_count: int = Query(default=20, ge=1, le=200),
     user_email: str | None = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return history_service.fetch_recent_history(current_user, limit_count=limit_count, user_email=user_email)
+    normalized_email = (user_email or current_user.email or "").strip().lower() or "self"
+    cache_key = response_cache_service.account_cache_key("history", current_user.uid, str(limit_count), normalized_email)
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key,
+        "history",
+        lambda: history_service.fetch_recent_history(current_user, limit_count=limit_count, user_email=user_email),
+    )
+    return cached_json_response(request, cached)
 
 
 @router.get("/mobile-inbox")
 def fetch_mobile_inbox(
+    request: Request,
     history_limit: int = Query(default=12, ge=1, le=50),
     candidate_limit: int = Query(default=60, ge=1, le=200),
     user_email: str | None = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return history_service.fetch_mobile_inbox(
+    payload = history_service.fetch_mobile_inbox(
         current_user,
         history_limit=history_limit,
         candidate_limit=candidate_limit,
         user_email=user_email,
     )
+    return cached_json_response(request, payload)
 
 
 @router.post("/history/manual-snapshot")

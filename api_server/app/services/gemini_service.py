@@ -4,8 +4,15 @@ import re
 from typing import Any, Dict, Iterable, List
 
 from fastapi import HTTPException
-from google import genai
-import google.generativeai as genai_legacy
+try:
+    from google import genai
+except ImportError:  # pragma: no cover - optional in isolated test envs
+    genai = None  # type: ignore[assignment]
+
+try:
+    import google.generativeai as genai_legacy
+except ImportError:  # pragma: no cover - optional in isolated test envs
+    genai_legacy = None  # type: ignore[assignment]
 
 from app.core.config import get_settings
 
@@ -96,6 +103,9 @@ def generate_content(
     config: Any = None,
     api_keys: Iterable[str] | None = None,
 ) -> str:
+    if genai is None:
+        raise HTTPException(status_code=500, detail="Google GenAI SDK is not installed on server")
+
     keys = _get_keys(api_keys)
     last_error: Exception | None = None
     normalized_config = _normalize_config(config) if config is not None else None
@@ -121,6 +131,9 @@ def generate_content(
 
 
 def embed_text(text: str, model: str | None = None) -> List[float]:
+    if genai_legacy is None:
+        raise HTTPException(status_code=500, detail="Google Generative AI SDK is not installed on server")
+
     settings = get_settings()
     target_model = model or settings.gemini_embedding_model
     keys = _get_keys()

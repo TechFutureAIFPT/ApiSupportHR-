@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
@@ -18,7 +19,25 @@ def cleanup_chatbot_sessions(user: AuthenticatedUser, keep_count: int = MAX_SESS
         doc.reference.delete()
 
 
-def create_chatbot_session(user: AuthenticatedUser, job_position: str, total_candidates: int) -> str:
+def get_owned_chatbot_session_snapshot(user: AuthenticatedUser, session_id: str):
+    snapshot = repo.chatbot_sessions().document(session_id).get()
+    if not snapshot.exists:
+        return None
+
+    data = snapshot.to_dict() or {}
+    if data.get("uid") != user.uid:
+        return None
+    return snapshot
+
+
+def create_chatbot_session(
+    user: AuthenticatedUser,
+    job_position: str,
+    total_candidates: int,
+    *,
+    analysis_context: dict[str, Any] | None = None,
+    candidate_briefs: list[dict[str, Any]] | None = None,
+) -> str:
     doc_ref = repo.create_document(repo.chatbot_sessions())
     doc_ref.set(
         {
@@ -29,6 +48,10 @@ def create_chatbot_session(user: AuthenticatedUser, job_position: str, total_can
             "sessionTitle": f"{job_position} - {int(total_candidates or 0)} ứng viên",
             "messages": [],
             "messageCount": 0,
+            "analysisContext": analysis_context or {},
+            "candidateBriefs": list(candidate_briefs or []),
+            "lastSuggestedCandidateIds": [],
+            "lastFocusCandidateId": "",
             "createdAt": repo.server_timestamp(),
             "updatedAt": repo.server_timestamp(),
             "lastMessageAt": int(datetime.now(timezone.utc).timestamp() * 1000),
@@ -39,14 +62,11 @@ def create_chatbot_session(user: AuthenticatedUser, job_position: str, total_can
 
 
 def add_chatbot_messages(user: AuthenticatedUser, session_id: str, messages: list[dict[str, object]]) -> bool:
-    snapshot = repo.chatbot_sessions().document(session_id).get()
-    if not snapshot.exists:
+    snapshot = get_owned_chatbot_session_snapshot(user, session_id)
+    if snapshot is None:
         return False
 
     data = snapshot.to_dict() or {}
-    if data.get("uid") != user.uid:
-        return False
-
     current_messages = list(data.get("messages") or [])
     current_messages.extend(messages)
     if len(current_messages) > MAX_MESSAGES_PER_SESSION:
@@ -69,6 +89,17 @@ def add_chatbot_messages(user: AuthenticatedUser, session_id: str, messages: lis
     return True
 
 
+def update_chatbot_session_state(user: AuthenticatedUser, session_id: str, payload: dict[str, Any]) -> bool:
+    snapshot = get_owned_chatbot_session_snapshot(user, session_id)
+    if snapshot is None:
+        return False
+
+    next_payload = dict(payload)
+    next_payload["updatedAt"] = repo.server_timestamp()
+    snapshot.reference.set(next_payload, merge=True)
+    return True
+
+
 def get_user_chatbot_sessions(user: AuthenticatedUser, limit_count: int = 20) -> list[dict[str, object]]:
     docs = list(repo.chatbot_sessions().where("uid", "==", user.uid).stream())
     ordered = sorted_docs(docs, "updatedAt")[:limit_count]
@@ -76,12 +107,10 @@ def get_user_chatbot_sessions(user: AuthenticatedUser, limit_count: int = 20) ->
 
 
 def get_chatbot_session(user: AuthenticatedUser, session_id: str) -> dict[str, object] | None:
-    snapshot = repo.chatbot_sessions().document(session_id).get()
-    if not snapshot.exists:
+    snapshot = get_owned_chatbot_session_snapshot(user, session_id)
+    if snapshot is None:
         return None
     data = snapshot.to_dict() or {}
-    if data.get("uid") != user.uid:
-        return None
     return {"id": snapshot.id, **serialize(data)}
 
 
@@ -91,11 +120,8 @@ def find_recent_chatbot_session(user: AuthenticatedUser, job_position: str) -> d
 
 
 def delete_chatbot_session(user: AuthenticatedUser, session_id: str) -> bool:
-    snapshot = repo.chatbot_sessions().document(session_id).get()
-    if not snapshot.exists:
-        return False
-    data = snapshot.to_dict() or {}
-    if data.get("uid") != user.uid:
+    snapshot = get_owned_chatbot_session_snapshot(user, session_id)
+    if snapshot is None:
         return False
     snapshot.reference.delete()
     return True

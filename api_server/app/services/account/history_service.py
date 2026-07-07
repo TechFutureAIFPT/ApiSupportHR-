@@ -7,6 +7,7 @@ import unicodedata
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
+from app.services.account import response_cache_service, view_sync_service
 from app.services.account.shared import fast_cleanup, optimized_docs, serialize, sorted_docs, to_millis
 from app.utils.text_normalization import normalize_display_text
 
@@ -18,6 +19,27 @@ MOBILE_TEXT_FIELD_LENGTH = 420
 
 def cleanup_synced_history(user: AuthenticatedUser, keep_count: int = MAX_HISTORY_ENTRIES_PER_USER) -> None:
     fast_cleanup(repo.synced_history(), user.uid, keep_count)
+
+
+def _normalize_user_email(user: AuthenticatedUser, user_email: str | None = None) -> str:
+    normalized = (user_email or user.email or "").strip().lower()
+    return normalized or "self"
+
+
+def mobile_inbox_view_doc_id(user: AuthenticatedUser, user_email: str | None = None) -> str:
+    email_key = _normalize_user_email(user, user_email)
+    return f"{user.uid}__{email_key}"
+
+
+def _stream_limited_by_uid(collection_ref: Any, uid: str, limit_count: int) -> list[Any]:
+    query = collection_ref.where("uid", "==", uid)
+    limiter = getattr(query, "limit", None)
+    if callable(limiter):
+        try:
+            query = limiter(limit_count)
+        except Exception:
+            pass
+    return list(query.stream())
 
 
 def sync_history_entry(user: AuthenticatedUser, analysis_data: dict[str, Any]) -> str:
@@ -48,6 +70,7 @@ def sync_history_entry(user: AuthenticatedUser, analysis_data: dict[str, Any]) -
         }
     )
     cleanup_synced_history(user, MAX_HISTORY_ENTRIES_PER_USER)
+    view_sync_service.refresh_user_views(user, "history", rebuild_mobile_inbox=True)
     return doc_ref.id
 
 
@@ -58,9 +81,9 @@ def get_synced_history(user: AuthenticatedUser, limit_count: int = 20) -> list[d
 
 def get_sync_stats(user: AuthenticatedUser) -> dict[str, Any]:
     stat_limit = 200
-    cache_docs = list(repo.synced_cache().where("uid", "==", user.uid).limit(stat_limit).stream())
+    cache_docs = _stream_limited_by_uid(repo.synced_cache(), user.uid, stat_limit)
     history_docs = optimized_docs(repo.synced_history(), user.uid, stat_limit)
-    feedback_docs = list(repo.analysis_feedback().where("uid", "==", user.uid).limit(stat_limit).stream())
+    feedback_docs = _stream_limited_by_uid(repo.analysis_feedback(), user.uid, stat_limit)
     last_sync_time = serialize(history_docs[0].to_dict().get("timestamp")) if history_docs else None
     return {
         "cacheEntries": len(cache_docs),
@@ -449,7 +472,7 @@ def _optimized_history_docs(collection_ref: Any, user: AuthenticatedUser, limit_
     return optimized_docs(collection_ref, user.uid, limit_count)
 
 
-def fetch_mobile_inbox(
+def _build_mobile_inbox_payload(
     user: AuthenticatedUser,
     history_limit: int = 12,
     candidate_limit: int = 60,
@@ -480,7 +503,7 @@ def fetch_mobile_inbox(
     candidates.sort(key=lambda item: item.get("score") or 0, reverse=True)
     candidates = candidates[:candidate_limit]
 
-    return {
+    payload = {
         "candidates": candidates,
         "history": history,
         "stats": {
@@ -488,8 +511,112 @@ def fetch_mobile_inbox(
             "historyCount": len(history),
             "latestTimestamp": history[0]["timestamp"] if history else None,
         },
-        "revision": f"mobile-inbox-v1:{history[0]['timestamp'] if history else 0}:{len(candidates)}",
         "generatedAt": int(datetime.now(timezone.utc).timestamp() * 1000),
+    }
+    payload["revision"] = response_cache_service.build_revision("mobile_inbox", payload)
+    return payload
+
+
+def build_mobile_inbox_view_document(user: AuthenticatedUser, user_email: str | None = None) -> dict[str, Any]:
+    payload = _build_mobile_inbox_payload(user, history_limit=50, candidate_limit=200, user_email=user_email)
+    return {
+        "uid": user.uid,
+        "email": user.email,
+        "emailKey": _normalize_user_email(user, user_email),
+        "payload": payload,
+        "revision": payload["revision"],
+        "generatedAt": payload["generatedAt"],
+        "updatedAt": repo.server_timestamp(),
+    }
+
+
+def _load_mobile_inbox_from_view(
+    user: AuthenticatedUser,
+    history_limit: int,
+    candidate_limit: int,
+    user_email: str | None = None,
+) -> dict[str, Any] | None:
+    try:
+        snapshot = repo.mobile_inbox_views().document(mobile_inbox_view_doc_id(user, user_email)).get()
+    except Exception:
+        return None
+    if not snapshot.exists:
+        return None
+    data = serialize(snapshot.to_dict() or {})
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else None
+    if not payload:
+        return None
+    history = list(payload.get("history") or [])[:history_limit]
+    candidates = list(payload.get("candidates") or [])[:candidate_limit]
+    stats = payload.get("stats") if isinstance(payload.get("stats"), dict) else {}
+    return {
+        "candidates": candidates,
+        "history": history,
+        "stats": {
+            "candidateCount": len(candidates),
+            "historyCount": len(history),
+            "latestTimestamp": stats.get("latestTimestamp") if history else None,
+        },
+        "revision": str(payload.get("revision") or response_cache_service.build_revision("mobile_inbox", payload)),
+        "generatedAt": int(payload.get("generatedAt") or int(datetime.now(timezone.utc).timestamp() * 1000)),
+    }
+
+
+def fetch_mobile_inbox(
+    user: AuthenticatedUser,
+    history_limit: int = 12,
+    candidate_limit: int = 60,
+    user_email: str | None = None,
+) -> dict[str, Any]:
+    normalized_email = _normalize_user_email(user, user_email)
+    cache_key = response_cache_service.account_cache_key(
+        "mobile_inbox",
+        user.uid,
+        str(history_limit),
+        str(candidate_limit),
+        normalized_email,
+    )
+
+    def build_payload() -> dict[str, Any]:
+        if normalized_email == _normalize_user_email(user):
+            payload = _load_mobile_inbox_from_view(user, history_limit, candidate_limit)
+            if payload is not None and (payload.get("history") or payload.get("candidates")):
+                return payload
+            view_document = build_mobile_inbox_view_document(user)
+            try:
+                repo.mobile_inbox_views().document(mobile_inbox_view_doc_id(user)).set(view_document)
+            except Exception:
+                pass
+            cached_payload = view_document["payload"]
+            return {
+                "candidates": list(cached_payload.get("candidates") or [])[:candidate_limit],
+                "history": list(cached_payload.get("history") or [])[:history_limit],
+                "stats": cached_payload.get("stats") or {},
+                "revision": cached_payload.get("revision"),
+                "generatedAt": cached_payload.get("generatedAt"),
+            }
+        return _build_mobile_inbox_payload(
+            user,
+            history_limit=history_limit,
+            candidate_limit=candidate_limit,
+            user_email=user_email,
+        )
+
+    cached = response_cache_service.get_or_build_cached_payload(cache_key, "mobile_inbox", build_payload)
+    payload = cached.payload if isinstance(cached.payload, dict) else {}
+    if not payload.get("history") and not payload.get("candidates"):
+        fresh_payload = build_payload()
+        if fresh_payload.get("history") or fresh_payload.get("candidates"):
+            cached = response_cache_service.write_cached_payload(
+                cache_key,
+                "mobile_inbox",
+                fresh_payload,
+                revision=str(fresh_payload.get("revision") or ""),
+            )
+    return {
+        **cached.payload,
+        "revision": cached.revision,
+        "generatedAt": cached.generated_at,
     }
 
 
@@ -567,6 +694,7 @@ def save_history_session(user: AuthenticatedUser, payload: dict[str, Any]) -> st
             "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
         }
     )
+    view_sync_service.refresh_user_views(user, "history", rebuild_mobile_inbox=True)
     return doc_ref.id
 
 
@@ -646,6 +774,7 @@ def save_manual_history_snapshot(user: AuthenticatedUser, payload: dict[str, Any
         },
         merge=True,
     )
+    view_sync_service.refresh_user_views(user, "history", rebuild_mobile_inbox=True)
     return doc_id
 
 

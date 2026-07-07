@@ -1,19 +1,29 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 from io import BytesIO
 from typing import Iterable, Literal
 
-import fitz
-import pymupdf4llm
-from docx import Document
+try:
+    import fitz
+except ModuleNotFoundError:  # pragma: no cover - optional in isolated test envs
+    fitz = None  # type: ignore[assignment]
+
+try:
+    import pymupdf4llm
+except ModuleNotFoundError:  # pragma: no cover - optional in isolated test envs
+    pymupdf4llm = None  # type: ignore[assignment]
+
+try:
+    from docx import Document
+except ModuleNotFoundError:  # pragma: no cover - optional in isolated test envs
+    Document = None  # type: ignore[assignment]
 
 from app.core.config import get_settings
 from app.prompts import render_prompt
 from app.services.gemini_service import generate_content
 
-
-FILE_SIZE_LIMIT_MB = 15
 MIN_PDF_TEXT_LENGTH = 200
 MAX_OCR_PAGES = 3
 PDF_RENDER_SCALE = 2.2
@@ -87,6 +97,9 @@ def _extract_text_from_pdf(
     document_type: Literal["cv", "jd"],
     api_keys: Iterable[str] | None = None,
 ) -> str:
+    if fitz is None or pymupdf4llm is None:
+        raise RuntimeError("PDF extraction dependencies are not installed on server")
+
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     try:
         md_text = "" if force_ocr else pymupdf4llm.to_markdown(doc)
@@ -109,6 +122,9 @@ def _extract_text_from_pdf(
 
 
 def _extract_text_from_docx(file_bytes: bytes) -> str:
+    if Document is None:
+        raise RuntimeError("DOCX extraction dependency is not installed on server")
+
     document = Document(BytesIO(file_bytes))
     paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
 
@@ -141,10 +157,21 @@ def extract_text_from_upload(
     document_type: str | None = None,
     api_keys: Iterable[str] | None = None,
 ) -> str:
-    if len(file_bytes) > FILE_SIZE_LIMIT_MB * 1024 * 1024:
-        raise ValueError(f"File is too large. Maximum size is {FILE_SIZE_LIMIT_MB}MB.")
+    settings = get_settings()
+    max_size_mb = settings.upload_file_size_limit_mb
+    if len(file_bytes) > max_size_mb * 1024 * 1024:
+        raise ValueError(f"File is too large. Maximum size is {max_size_mb}MB.")
 
     name_lower = filename.lower()
+    suffix = Path(name_lower).suffix.lower()
+    allowed_extensions = set(settings.allowed_upload_extensions)
+    allowed_mime_types = set(settings.allowed_upload_mime_types)
+    if suffix and suffix not in allowed_extensions:
+        raise ValueError(f"Unsupported file extension: {suffix}")
+    normalized_content_type = (content_type or "").strip().lower()
+    if normalized_content_type and normalized_content_type not in allowed_mime_types and not normalized_content_type.startswith("image/"):
+        raise ValueError(f"Unsupported MIME type: {content_type}")
+
     doc_type: Literal["cv", "jd"] = "jd" if document_type == "jd" else "cv"
 
     if content_type == "application/pdf" or name_lower.endswith(".pdf"):

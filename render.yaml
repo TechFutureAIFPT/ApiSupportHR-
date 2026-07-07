@@ -2,10 +2,12 @@ services:
   - type: web
     name: backendsupporthr
     runtime: python
-    plan: free
+    plan: starter
+    numInstances: 1
     rootDir: api_server
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11
@@ -61,6 +63,30 @@ services:
         sync: false
       - key: FIREBASE_APPCHECK_SITE_KEY
         sync: false
+      - key: FIREBASE_APPCHECK_ENFORCE
+        value: "true"
+      - key: REDIS_URL
+        fromService:
+          name: supporthr-cache
+          property: connectionString
+      - key: REDIS_INTERNAL_URL
+        fromService:
+          name: supporthr-cache
+          property: connectionString
+      - key: ACCOUNT_CACHE_TTL_SECONDS
+        value: "120"
+      - key: MOBILE_INBOX_CACHE_TTL_SECONDS
+        value: "60"
+      - key: TEMPLATE_CACHE_TTL_SECONDS
+        value: "300"
+      - key: SYNC_CACHE_TTL_SECONDS
+        value: "300"
+      - key: UPLOAD_FILE_SIZE_LIMIT_MB
+        value: "15"
+      - key: ALLOWED_UPLOAD_EXTENSIONS
+        value: ".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
+      - key: ALLOWED_UPLOAD_MIME_TYPES
+        value: application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg
       - key: VECTOR_STORE_PROVIDER
         value: auto
       - key: VECTOR_STORE_JSON_DIR
@@ -85,3 +111,7 @@ services:
         value: "0.75"
       - key: RAG_MAX_EXEMPLARS
         value: "2"
+  - type: keyvalue
+    name: supporthr-cache
+    plan: starter
+    persistenceMode: snapshot

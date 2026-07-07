@@ -4,6 +4,7 @@ from typing import Any
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
+from app.services.account import view_sync_service
 from app.services.account.shared import serialize, sorted_docs
 
 
@@ -37,6 +38,7 @@ def create_template(user: AuthenticatedUser, payload: dict[str, Any]) -> dict[st
         }
     )
     snapshot = doc_ref.get()
+    view_sync_service.refresh_user_views(user, "template", rebuild_mobile_inbox=False)
     return {"id": doc_ref.id, **serialize(snapshot.to_dict() or {})}
 
 
@@ -55,6 +57,7 @@ def update_template(user: AuthenticatedUser, template_id: str, updates: dict[str
         {**clean_updates, "updatedAt": repo.server_timestamp()},
         merge=True,
     )
+    view_sync_service.refresh_user_views(user, "template", rebuild_mobile_inbox=False)
     return True
 
 
@@ -63,6 +66,7 @@ def delete_template(user: AuthenticatedUser, template_id: str) -> bool:
     if not snapshot.exists or (snapshot.to_dict() or {}).get("uid") != user.uid:
         return False
     snapshot.reference.delete()
+    view_sync_service.refresh_user_views(user, "template", rebuild_mobile_inbox=False)
     return True
 
 
@@ -95,4 +99,5 @@ def seed_default_templates_if_empty(user: AuthenticatedUser) -> int:
     ]
     for item in defaults:
         create_template(user, item)
+    view_sync_service.refresh_user_views(user, "template", rebuild_mobile_inbox=False)
     return len(defaults)

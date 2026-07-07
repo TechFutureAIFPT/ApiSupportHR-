@@ -108,8 +108,6 @@ def normalize_user_settings(raw: Any, user: AuthenticatedUser) -> dict[str, Any]
 
     density = ui.get("sidebarDensity", defaults["ui"]["sidebarDensity"])
     new_session_mode = workflow.get("newSessionMode", defaults["workflow"]["newSessionMode"])
-    theme = ui.get("theme", defaults["ui"]["theme"])
-    language = ui.get("language", defaults["ui"]["language"])
     fixed_jd = _normalize_fixed_jd(workflow.get("fixedJD"))
 
     normalized = {
@@ -118,8 +116,8 @@ def normalize_user_settings(raw: Any, user: AuthenticatedUser) -> dict[str, Any]
             "sidebarDensity": "cozy" if density == "cozy" else "compact",
             "accessibleMode": _bool(ui.get("accessibleMode"), defaults["ui"]["accessibleMode"]),
             "reducedMotion": _bool(ui.get("reducedMotion"), defaults["ui"]["reducedMotion"]),
-            "language": language if language in ("vi-VN", "en-US") else "vi-VN",
-            "theme": theme if theme in ("light", "dark", "system") else "light",
+            "language": defaults["ui"]["language"],
+            "theme": defaults["ui"]["theme"],
         },
         "account": {
             "displayName": str(account.get("displayName") or user.display_name or defaults["account"]["displayName"]),

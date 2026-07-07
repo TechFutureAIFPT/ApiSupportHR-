@@ -5,12 +5,17 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user
-from app.main import api_app
+from app.api.routes.account.history import router as history_router
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
+
+
+api_app = FastAPI()
+api_app.include_router(history_router, prefix="/api/account")
 
 
 class FakeDocumentSnapshot:

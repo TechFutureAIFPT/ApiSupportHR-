@@ -86,7 +86,7 @@ class AnalysisFeedbackRequest(BaseModel):
     rank: str | None = None
     reason: str | None = None
     notes: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: AnalysisFeedbackMetadata = Field(default_factory=lambda: AnalysisFeedbackMetadata())
 
 
 class AnalysisFeedbackResponse(BaseModel):
@@ -114,7 +114,7 @@ class AnalysisFeedbackResponse(BaseModel):
     rank: str | None = None
     reason: str | None = None
     notes: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: AnalysisFeedbackMetadata = Field(default_factory=lambda: AnalysisFeedbackMetadata())
     createdAt: int | None = None
     updatedAt: int | None = None
 
@@ -188,15 +188,106 @@ class ChatMessageRecordRequest(BaseModel):
     content: str
     timestamp: int
     suggestedCandidateIds: list[str] = Field(default_factory=list)
+    metadata: ChatMessageMetadata = Field(default_factory=lambda: ChatMessageMetadata())
 
 
 class ChatbotSessionCreateRequest(BaseModel):
     jobPosition: str
     totalCandidates: int = 0
+    analysisContext: ChatbotAnalysisContext | None = None
+    candidateBriefs: list[CandidateBrief] = Field(default_factory=list)
 
 
 class ChatbotMessagesRequest(BaseModel):
     messages: list[ChatMessageRecordRequest] = Field(default_factory=list)
+
+
+class CandidateStageDecisionSnapshot(BaseModel):
+    status: str = ""
+    label: str = ""
+    reason: str = ""
+    blockingReasons: list[str] = Field(default_factory=list)
+
+
+class CandidateBrief(BaseModel):
+    id: str
+    candidateName: str
+    score: float = 0.0
+    rank: str = "C"
+    headlineVerdict: str = ""
+    topStrengths: list[str] = Field(default_factory=list)
+    topRisks: list[str] = Field(default_factory=list)
+    matchedRequirements: list[str] = Field(default_factory=list)
+    missingRequirements: list[str] = Field(default_factory=list)
+    redFlags: list[str] = Field(default_factory=list)
+    stageDecision: CandidateStageDecisionSnapshot = Field(default_factory=CandidateStageDecisionSnapshot)
+    interviewQuestions: list[str] = Field(default_factory=list)
+
+
+class CandidateAdviceCard(BaseModel):
+    id: str
+    candidateName: str
+    score: float = 0.0
+    rank: str = "C"
+    headlineVerdict: str = ""
+    topStrengths: list[str] = Field(default_factory=list)
+    topRisks: list[str] = Field(default_factory=list)
+    matchedRequirements: list[str] = Field(default_factory=list)
+    missingRequirements: list[str] = Field(default_factory=list)
+    redFlags: list[str] = Field(default_factory=list)
+    interviewQuestions: list[str] = Field(default_factory=list)
+    recommendedAction: str = ""
+    focusLabel: str = ""
+    stageDecision: CandidateStageDecisionSnapshot = Field(default_factory=CandidateStageDecisionSnapshot)
+
+
+class ChatbotAnalysisContext(BaseModel):
+    analysisSessionId: str | None = None
+    historyId: str | None = None
+    syncHistoryId: str | None = None
+    jdHash: str | None = None
+    jobPosition: str | None = None
+
+
+class ChatMessageMetadata(BaseModel):
+    focusCandidateId: str | None = None
+    followUpQuestions: list[str] = Field(default_factory=list)
+    suggestedActions: list[str] = Field(default_factory=list)
+    candidateCards: list[CandidateAdviceCard] = Field(default_factory=list)
+
+
+class ChatbotReplyRequest(BaseModel):
+    message: str
+    selectedCandidateIds: list[str] = Field(default_factory=list)
+    focusCandidateId: str | None = None
+    candidateBriefs: list[CandidateBrief] = Field(default_factory=list)
+
+
+class ChatbotReplyResponse(BaseModel):
+    sessionId: str
+    userMessage: ChatMessageRecordRequest
+    assistantMessage: ChatMessageRecordRequest
+    responseText: str
+    suggestedCandidateIds: list[str] = Field(default_factory=list)
+    focusCandidateId: str | None = None
+    candidateCards: list[CandidateAdviceCard] = Field(default_factory=list)
+    followUpQuestions: list[str] = Field(default_factory=list)
+    suggestedActions: list[str] = Field(default_factory=list)
+
+
+class AnalysisFeedbackMetadata(BaseModel):
+    source: str = ""
+    feedbackScope: str = ""
+    isReusableGuidance: bool = False
+    selectedCriteria: list[str] = Field(default_factory=list)
+    scoreDifference: float | None = None
+    verdictHeadline: str = ""
+    topStrengths: list[str] = Field(default_factory=list)
+    topRisks: list[str] = Field(default_factory=list)
+    matchedRequirements: list[str] = Field(default_factory=list)
+    missingRequirements: list[str] = Field(default_factory=list)
+    redFlags: list[str] = Field(default_factory=list)
+    stageDecision: dict[str, Any] = Field(default_factory=dict)
 
 
 class GoogleDriveOAuthUrlRequest(BaseModel):

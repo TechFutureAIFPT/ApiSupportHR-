@@ -5,9 +5,16 @@ import os
 from functools import lru_cache
 from typing import Any
 
-import firebase_admin
-from firebase_admin import auth as firebase_auth
-from firebase_admin import credentials, firestore
+try:
+    import firebase_admin
+    from firebase_admin import app_check, auth as firebase_auth
+    from firebase_admin import credentials, firestore
+except ModuleNotFoundError:  # pragma: no cover - test environments may not install Firebase Admin.
+    firebase_admin = None  # type: ignore[assignment]
+    app_check = None  # type: ignore[assignment]
+    firebase_auth = None  # type: ignore[assignment]
+    credentials = None  # type: ignore[assignment]
+    firestore = None  # type: ignore[assignment]
 
 
 def _build_credential_payload() -> dict[str, Any]:
@@ -38,7 +45,10 @@ def _build_credential_payload() -> dict[str, Any]:
 
 
 @lru_cache
-def get_firebase_app() -> firebase_admin.App:
+def get_firebase_app() -> Any:
+    if firebase_admin is None or credentials is None:
+        raise RuntimeError("Firebase Admin SDK chua duoc cai dat trong moi truong hien tai.")
+
     if firebase_admin._apps:
         return firebase_admin.get_app()
 
@@ -49,9 +59,19 @@ def get_firebase_app() -> firebase_admin.App:
     return firebase_admin.initialize_app(credential, options=options)
 
 
-def get_firestore_client() -> firestore.Client:
+def get_firestore_client() -> Any:
+    if firestore is None:
+        raise RuntimeError("Firebase Firestore client chua san sang trong moi truong hien tai.")
     return firestore.client(get_firebase_app())
 
 
 def verify_firebase_token(id_token: str) -> dict[str, Any]:
+    if firebase_auth is None:
+        raise RuntimeError("Firebase Admin SDK chua duoc cai dat trong moi truong hien tai.")
     return firebase_auth.verify_id_token(id_token, app=get_firebase_app())
+
+
+def verify_app_check_token(token: str) -> dict[str, Any]:
+    if app_check is None:
+        raise RuntimeError("Firebase App Check SDK chua duoc cai dat trong moi truong hien tai.")
+    return app_check.verify_token(token, app=get_firebase_app())

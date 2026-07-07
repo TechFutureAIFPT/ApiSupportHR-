@@ -60,6 +60,7 @@ class Settings:
         self.firebase_app_id = os.getenv("FIREBASE_APP_ID", "")
         self.firebase_measurement_id = os.getenv("FIREBASE_MEASUREMENT_ID", "")
         self.firebase_appcheck_site_key = os.getenv("FIREBASE_APPCHECK_SITE_KEY", "")
+        self.firebase_appcheck_enforce = os.getenv("FIREBASE_APPCHECK_ENFORCE", "0").strip().lower() in {"1", "true", "yes", "on"}
         self.google_api_key = os.getenv("GOOGLE_API_KEY", "")
         self.google_picker_api_key = os.getenv("GOOGLE_PICKER_API_KEY", "")
         self.google_cloud_vision_api_key = os.getenv("GOOGLE_CLOUD_VISION_API_KEY", "")
@@ -91,6 +92,26 @@ class Settings:
         self.local_classifier_confidence_threshold = _float_env("LOCAL_CLASSIFIER_CONFIDENCE_THRESHOLD", 0.60)
         self.rag_similarity_threshold = _float_env("RAG_SIMILARITY_THRESHOLD", 0.75)
         self.rag_max_exemplars = max(1, int(_float_env("RAG_MAX_EXEMPLARS", 2)))
+        self.redis_url = os.getenv("REDIS_URL", "").strip()
+        self.redis_internal_url = os.getenv("REDIS_INTERNAL_URL", "").strip()
+        self.account_cache_ttl_seconds = max(15, int(os.getenv("ACCOUNT_CACHE_TTL_SECONDS", "120")))
+        self.mobile_inbox_cache_ttl_seconds = max(15, int(os.getenv("MOBILE_INBOX_CACHE_TTL_SECONDS", "60")))
+        self.template_cache_ttl_seconds = max(30, int(os.getenv("TEMPLATE_CACHE_TTL_SECONDS", "300")))
+        self.sync_cache_ttl_seconds = max(30, int(os.getenv("SYNC_CACHE_TTL_SECONDS", "300")))
+        self.upload_file_size_limit_mb = max(1, int(os.getenv("UPLOAD_FILE_SIZE_LIMIT_MB", "15")))
+        self.allowed_upload_extensions = [
+            value.strip().lower()
+            for value in os.getenv("ALLOWED_UPLOAD_EXTENSIONS", ".pdf,.docx,.txt,.csv,.png,.jpg,.jpeg,.webp").split(",")
+            if value.strip()
+        ]
+        self.allowed_upload_mime_types = [
+            value.strip().lower()
+            for value in os.getenv(
+                "ALLOWED_UPLOAD_MIME_TYPES",
+                "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/csv,image/png,image/jpeg,image/webp"
+            ).split(",")
+            if value.strip()
+        ]
         default_drive_origins = list(dict.fromkeys([self.frontend_origin, *DEFAULT_WEB_ORIGINS]))
         if raw_drive_origins:
             self.google_drive_allowed_origins = list(
@@ -151,6 +172,10 @@ class Settings:
             seen.add(key)
             unique.append(key)
         return unique
+
+    @property
+    def redis_connection_url(self) -> str:
+        return self.redis_internal_url or self.redis_url
 
 
 @lru_cache

@@ -181,6 +181,41 @@ class MobileInboxApiTests(unittest.TestCase):
         self.assertEqual(history["screeningStats"]["failFactors"]["location"], 1)
         self.assertEqual(history["topHrSummaries"][0]["score"], 77)
 
+    def test_mobile_inbox_returns_304_when_revision_matches_if_none_match(self) -> None:
+        api_app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+            uid="user-304",
+            email="etag@example.com",
+            display_name="HR Tester",
+            photo_url=None,
+        )
+        self.fake_cv_history.store["history-1"] = {
+            "uid": "user-304",
+            "userEmail": "etag@example.com",
+            "jobPosition": "Backend Developer",
+            "timestamp": 2000,
+            "totalCandidates": 1,
+            "fullPayload": {
+                "candidates": [
+                    {
+                        "id": "cand-1",
+                        "candidateName": "Nguyen Van A",
+                        "status": "SUCCESS",
+                        "analysis": {"Tổng điểm": 88, "Hạng": "A", "Chi tiết": []},
+                    }
+                ]
+            },
+        }
+
+        first = self.client.get("/api/account/mobile-inbox")
+        self.assertEqual(first.status_code, 200, first.text)
+        etag = first.headers.get("etag")
+        self.assertTrue(etag)
+
+        second = self.client.get("/api/account/mobile-inbox", headers={"If-None-Match": str(etag)})
+        self.assertEqual(second.status_code, 304, second.text)
+        self.assertEqual(second.headers.get("etag"), etag)
+        self.assertEqual(second.headers.get("x-data-revision"), first.headers.get("x-data-revision"))
+
 
 if __name__ == "__main__":
     unittest.main()

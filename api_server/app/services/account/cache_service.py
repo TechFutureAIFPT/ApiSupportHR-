@@ -8,6 +8,7 @@ from typing import Any
 
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
+from app.services.account import view_sync_service
 from app.services.account.shared import fast_cleanup, optimized_docs, serialize, sorted_docs
 
 
@@ -62,6 +63,7 @@ def sync_cache_entry(
         }
     )
     cleanup_user_cache(user, MAX_CACHE_ENTRIES_PER_USER)
+    view_sync_service.refresh_user_views(user, "cache", rebuild_mobile_inbox=False)
 
 
 def get_cache_entry(user: AuthenticatedUser, cache_key: str) -> dict[str, Any] | None:
@@ -124,6 +126,7 @@ def clear_user_cache(user: AuthenticatedUser) -> None:
             break
         for doc in docs:
             doc.reference.delete()
+    view_sync_service.refresh_user_views(user, "cache", rebuild_mobile_inbox=False)
 
 
 def cleanup_user_cache(user: AuthenticatedUser, keep_count: int = MAX_CACHE_ENTRIES_PER_USER) -> None:

@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from app.api.response_utils import cached_json_response
 from app.api.deps import get_current_user
 from app.schemas.account import AuthenticatedUser, UserJDTemplateCreateRequest, UserJDTemplateUpdateRequest
-from app.services.account import template_service
+from app.services.account import response_cache_service, template_service
 
 
 router = APIRouter()
 
 
 @router.get("/jd-templates")
-def get_jd_templates(current_user: AuthenticatedUser = Depends(get_current_user)):
-    return template_service.get_user_templates(current_user)
+def get_jd_templates(request: Request, current_user: AuthenticatedUser = Depends(get_current_user)):
+    cache_key = response_cache_service.account_cache_key("templates", current_user.uid)
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key,
+        "templates",
+        lambda: template_service.get_user_templates(current_user),
+    )
+    return cached_json_response(request, cached)
 
 
 @router.post("/jd-templates")

@@ -12,6 +12,7 @@ from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.shared import serialize
 from app.services.cv_pipeline_service import run_smart_cv_analysis
+from app.services.security_service import enter_analysis_job, leave_analysis_job
 
 
 JobRecord = dict[str, Any]
@@ -124,9 +125,13 @@ async def _run_job(job_id: str, payload: dict[str, Any], current_user: Authentic
             error=str(error),
             traceback=traceback.format_exc(),
         )
+    finally:
+        leave_analysis_job(current_user.uid if current_user else None)
 
 
 def start_analysis_job(payload: dict[str, Any], current_user: AuthenticatedUser | None = None) -> JobRecord:
+    if current_user is not None:
+        enter_analysis_job(current_user.uid)
     job_id = uuid.uuid4().hex
     now = _now_iso()
     record: JobRecord = {

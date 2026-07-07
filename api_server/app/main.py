@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from app.api.routes import account_router, ai_router, files_router, mobile_jd_router
 from app.core.config import get_settings
+from app.services.security_service import apply_request_rate_limits, log_audit_event, resolve_client_ip
 from app.utils.text_normalization import normalize_payload_text
 
 
@@ -35,7 +37,36 @@ def _build_allowed_origins() -> list[str]:
     origins.update(origin for origin in settings.google_drive_allowed_origins if origin)
     return sorted(origins)
 
+
 api_app = FastAPI(title=settings.app_name)
+
+
+@api_app.middleware("http")
+async def audit_and_guard_requests(request: Request, call_next):
+    started_at = time.perf_counter()
+    request.state.app_check_verified = getattr(request.state, "app_check_verified", False)
+    request.state.cache_status = getattr(request.state, "cache_status", "bypass")
+
+    try:
+        apply_request_rate_limits(request)
+        response = await call_next(request)
+    except HTTPException as error:
+        response = JSONResponse({"detail": error.detail}, status_code=error.status_code)
+    finally:
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        log_audit_event(
+            {
+                "uid": getattr(request.state, "auth_uid", ""),
+                "path": request.url.path,
+                "method": request.method,
+                "statusCode": getattr(locals().get("response"), "status_code", 500),
+                "latencyMs": elapsed_ms,
+                "clientIp": resolve_client_ip(request),
+                "cache": getattr(request.state, "cache_status", "bypass"),
+                "appCheck": bool(getattr(request.state, "app_check_verified", False)),
+            }
+        )
+    return response
 
 
 @api_app.middleware("http")
@@ -82,6 +113,7 @@ async def normalize_json_text_response(request: Request, call_next):
         media_type="application/json",
     )
 
+
 api_app.include_router(ai_router)
 api_app.include_router(files_router)
 api_app.include_router(account_router)
@@ -93,12 +125,12 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-# Wrap the whole ASGI app so CORS headers are present even on unexpected 500s.
 app = CORSMiddleware(
     api_app,
     allow_origins=_build_allowed_origins(),
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}):(8081|8090|19006)$",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Firebase-AppCheck", "If-None-Match"],
+    expose_headers=["ETag", "X-Data-Revision"],
 )

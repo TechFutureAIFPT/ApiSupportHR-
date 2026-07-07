@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from firebase_admin import firestore
+try:
+    from firebase_admin import firestore
+except ModuleNotFoundError:  # pragma: no cover - optional in isolated test envs
+    firestore = None  # type: ignore[assignment]
 
 from app.integrations.firebase_admin import get_firestore_client
 
@@ -25,6 +28,8 @@ AI_REQUEST_HISTORY_COLLECTION = "aiRequestHistory"
 QUICK_CV_SCORES_COLLECTION = "mobileQuickCvAnalyses"
 FILE_EXTRACTIONS_COLLECTION = "fileExtractions"
 MOBILE_JD_HISTORY_COLLECTION = "mobileJDStandardizations"
+MOBILE_INBOX_VIEW_COLLECTION = "mobileInboxViews"
+USER_SYNC_STATE_COLLECTION = "userSyncState"
 
 
 def db():
@@ -32,6 +37,8 @@ def db():
 
 
 def server_timestamp():
+    if firestore is None:
+        raise RuntimeError("Firebase Admin SDK chua duoc cai dat trong moi truong hien tai.")
     return firestore.SERVER_TIMESTAMP
 
 
@@ -105,6 +112,14 @@ def file_extractions():
 
 def mobile_jd_history():
     return db().collection(MOBILE_JD_HISTORY_COLLECTION)
+
+
+def mobile_inbox_views():
+    return db().collection(MOBILE_INBOX_VIEW_COLLECTION)
+
+
+def user_sync_state():
+    return db().collection(USER_SYNC_STATE_COLLECTION)
 
 
 def create_document(collection_ref):
