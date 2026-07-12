@@ -10,6 +10,8 @@ from app.api.deps import get_current_user, get_optional_current_user
 from app.schemas.analysis import (
     AnalysisJobAcceptedResponse,
     AnalysisJobStatusResponse,
+    CandidateChatRequest,
+    CandidateChatResponse,
     CandidateEnrichmentRequest,
     CandidateEnrichmentResponse,
     CoreCvAnalysisRequest,
@@ -41,6 +43,7 @@ from app.schemas.workflows import (
 from app.schemas.account import AuthenticatedUser
 from app.services.account.persistence_service import save_ai_request, save_quick_cv_score
 from app.services.analysis_job_service import get_analysis_job, start_analysis_job
+from app.services.candidate_chat_service import reply_to_candidate_chat
 from app.services.candidate_enrichment_service import enrich_candidates
 from app.services.candidate_refinement_service import refine_cv_profile
 from app.services.cv_pipeline_service import run_smart_cv_analysis
@@ -356,6 +359,26 @@ def cv_refine_profile(
         response_payload=result,
     )
     return CvProfileRefineResponse(**result, saved_record_id=saved_record_id)
+
+
+@router.post("/cv/candidate-chat", response_model=CandidateChatResponse)
+def cv_candidate_chat(
+    payload: CandidateChatRequest,
+    current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
+) -> CandidateChatResponse:
+    result = reply_to_candidate_chat(
+        payload.candidate_snapshot,
+        payload.message,
+        job_position=payload.job_position,
+        recruiter_context=payload.recruiter_context,
+    )
+    saved_record_id = save_ai_request(
+        current_user,
+        operation="candidate_chat",
+        request_payload=payload.model_dump(),
+        response_payload=result,
+    )
+    return CandidateChatResponse(**result, saved_record_id=saved_record_id)
 
 
 @router.get("/cv/classifier-status", response_model=CvIndustryClassifierStatusResponse)

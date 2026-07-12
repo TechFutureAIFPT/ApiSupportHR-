@@ -938,9 +938,10 @@ def build_rule_based_fallback_candidates(
         }
         _refresh_candidate_summary(analysis)
 
-        fallback_warning = "AI generation tam thoi loi; da dung fallback keyword/vector scoring."
-        if failure_reason:
-            fallback_warning += f" Ly do: {failure_reason[:180]}"
+        fallback_warning = (
+            "Hệ thống AI tạm thời không phản hồi được, kết quả này được tính bằng phương pháp "
+            "so khớp từ khoá/kỹ năng thay thế. Vui lòng xem xét kỹ và chạy phân tích lại nếu cần."
+        )
 
         candidates.append(
             {
@@ -957,6 +958,7 @@ def build_rule_based_fallback_candidates(
                 "analysis": analysis,
                 "pipelineMetadata": {
                     "aiFallback": True,
+                    "analysisMethod": "rule_based_fallback",
                     "fallbackReason": failure_reason[:500],
                     "fallbackStrategy": "rule_based_keyword_scoring",
                 },
@@ -1741,6 +1743,43 @@ def _extract_json_array(text: str) -> List[Dict[str, Any]]:
     return data
 
 
+def _build_json_repair_prompt(raw_text: str, error: Exception) -> str:
+    return (
+        "JSON sau bị lỗi cú pháp:\n"
+        f"{raw_text[:8000]}\n\n"
+        f"Lỗi phân tích cú pháp: {str(error)[:300]}\n\n"
+        "Hãy trả về ĐÚNG JSON array hợp lệ, giữ nguyên toàn bộ nội dung, chỉ sửa lỗi cú pháp "
+        "(dấu phẩy thừa/thiếu, ngoặc chưa đóng, escape sai). Không thêm giải thích, không markdown, "
+        "không văn bản nào ngoài JSON array."
+    )
+
+
+def _tag_analysis_method(candidates: List[Dict[str, Any]], analysis_method: str) -> None:
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            candidate.setdefault("pipelineMetadata", {})["analysisMethod"] = analysis_method
+
+
+def _repair_json_array(raw_text: str, error: Exception, *, model: str) -> List[Dict[str, Any]]:
+    """Gọi lại Gemini 1 lần để sửa JSON lỗi cú pháp trước khi rơi xuống rule-based fallback."""
+    repaired_text = generate_content(
+        model,
+        _build_json_repair_prompt(raw_text, error),
+        {"responseMimeType": "application/json", "temperature": 0},
+    )
+    return _extract_json_array(repaired_text)
+
+
+async def _repair_json_array_async(raw_text: str, error: Exception, *, model: str) -> List[Dict[str, Any]]:
+    repaired_text = await asyncio.to_thread(
+        generate_content,
+        model,
+        _build_json_repair_prompt(raw_text, error),
+        {"responseMimeType": "application/json", "temperature": 0},
+    )
+    return _extract_json_array(repaired_text)
+
+
 def _create_analysis_prompt(
     jd_text: str,
     weights: Dict[str, Any],
@@ -1871,9 +1910,16 @@ def analyze_cv_entries(
             _analysis_generation_config(include_schema=False, system_instruction=system_prompt, model_name=settings.gemini_cv_analysis_model),
         )
 
+    try:
+        parsed_candidates = _extract_json_array(response_text)
+    except (json.JSONDecodeError, ValueError) as error:
+        print(f"[CV Analysis] JSON parse failed, attempting repair retry: {error}")
+        parsed_candidates = _repair_json_array(response_text, error, model=settings.gemini_default_model)
+        _tag_analysis_method(parsed_candidates, "llm_after_repair")
+
     cv_text_map = {str(entry.get("file_name") or ""): str(entry.get("text") or "") for entry in cv_entries}
     return _post_process_candidates(
-        _extract_json_array(response_text),
+        parsed_candidates,
         weights,
         jd_text=jd_text,
         hard_filters=hard_filters,
@@ -1918,9 +1964,16 @@ async def analyze_cv_entries_async(
             _analysis_generation_config(include_schema=False, system_instruction=system_prompt, model_name=settings.gemini_cv_analysis_model),
         )
 
+    try:
+        parsed_candidates = _extract_json_array(response_text)
+    except (json.JSONDecodeError, ValueError) as error:
+        print(f"[CV Analysis] Async JSON parse failed, attempting repair retry: {error}")
+        parsed_candidates = await _repair_json_array_async(response_text, error, model=settings.gemini_default_model)
+        _tag_analysis_method(parsed_candidates, "llm_after_repair")
+
     cv_text_map = {str(entry.get("file_name") or ""): str(entry.get("text") or "") for entry in cv_entries}
     return _post_process_candidates(
-        _extract_json_array(response_text),
+        parsed_candidates,
         weights,
         jd_text=jd_text,
         hard_filters=hard_filters,

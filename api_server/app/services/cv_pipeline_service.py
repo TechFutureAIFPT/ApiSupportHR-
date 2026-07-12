@@ -278,10 +278,14 @@ def _attach_pipeline_metadata(
     key = _candidate_file_key(candidate)
     metadata = copy.deepcopy(metadata_by_file.get(key) or {})
     metadata["cacheHit"] = cache_hit
-    candidate["pipelineMetadata"] = {
+    merged_metadata = {
         **(candidate.get("pipelineMetadata") or {}),
         **metadata,
     }
+    # Candidates from the rule-based fallback path already set analysisMethod
+    # explicitly; anything else came from a real Gemini response.
+    merged_metadata.setdefault("analysisMethod", "llm")
+    candidate["pipelineMetadata"] = merged_metadata
     return candidate
 
 

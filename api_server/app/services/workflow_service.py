@@ -329,7 +329,57 @@ def _candidate_strength_weakness_areas(candidate: Dict[str, Any]) -> tuple[List[
     return strengths, weaknesses
 
 
+_MATCHING_GAP_TAGS = {"[KHỚP MỘT PHẦN / KHUYẾT]", "[LỆCH PHA / THIẾU]"}
+_NO_GAP_DATA_TEXT = "Không có dữ liệu khoảng trống cụ thể."
+
+
+def _candidate_matching_gaps(candidate: Dict[str, Any], *, limit: int = 5) -> List[str]:
+    """Trích các dòng bị đánh dấu khớp một phần/lệch pha từ Ma tran doi sanh truc tiep
+    (đã được tính sẵn trong bước CV analysis) để dùng làm căn cứ sinh câu hỏi phỏng vấn."""
+    analysis = candidate.get("analysis") or {}
+    matrix = _get_record_value(analysis, "Ma tran doi sanh truc tiep", default=[]) or []
+    if not isinstance(matrix, list):
+        return []
+
+    gaps: List[str] = []
+    for item in matrix:
+        if not isinstance(item, dict):
+            continue
+        tag = str(item.get("tag") or "").strip()
+        if tag not in _MATCHING_GAP_TAGS:
+            continue
+        jd_requirement = str(item.get("jd") or "").strip()
+        if not jd_requirement:
+            continue
+        gap_detail = str(item.get("khoangTrong") or "").strip()
+        gaps.append(f"{jd_requirement}: {gap_detail}" if gap_detail else jd_requirement)
+        if len(gaps) >= limit:
+            break
+    return gaps
+
+
+def _matching_gaps_text(candidate: Dict[str, Any], *, limit: int = 5) -> str:
+    gaps = _candidate_matching_gaps(candidate, limit=limit)
+    return "\n".join(f"- {gap}" for gap in gaps) if gaps else _NO_GAP_DATA_TEXT
+
+
+def _aggregate_matching_gaps(candidates: List[Dict[str, Any]], *, limit: int = 5) -> str:
+    counts: Dict[str, int] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        for gap in _candidate_matching_gaps(candidate, limit=3):
+            counts[gap] = counts.get(gap, 0) + 1
+
+    if not counts:
+        return _NO_GAP_DATA_TEXT
+
+    ranked = sorted(counts.items(), key=lambda pair: pair[1], reverse=True)
+    return "\n".join(f"- {gap}" for gap, _ in ranked[:limit])
+
+
 def _create_general_questions_prompt(analysis_data: Dict[str, Any], stats: Dict[str, Any]) -> str:
+    candidates = analysis_data.get("candidates")
     return render_prompt(
         "workflow/interview_general",
         context={
@@ -340,6 +390,7 @@ def _create_general_questions_prompt(analysis_data: Dict[str, Any], stats: Dict[
             "levels": ", ".join(stats.get("levels", [])),
             "common_weaknesses": ", ".join(stats.get("commonWeaknesses", [])),
             "skill_gaps": ", ".join(stats.get("skillGaps", [])),
+            "matching_gaps": _aggregate_matching_gaps(candidates if isinstance(candidates, list) else []),
         },
     )
 
@@ -362,6 +413,7 @@ def _create_specific_questions_prompt(analysis_data: Dict[str, Any], stats: Dict
             "candidate_weaknesses": ", ".join(_get_record_value(analysis, "Điểm yếu CV", "Diem yeu CV", default=[]) or []),
             "strong_areas": ", ".join(strengths),
             "weak_areas": ", ".join(weaknesses),
+            "matching_gaps": _matching_gaps_text(candidate),
         },
     )
 
@@ -372,13 +424,14 @@ def _create_comparative_questions_prompt(analysis_data: Dict[str, Any], stats: D
         analysis = candidate.get("analysis") or {}
         strengths = ", ".join((_get_record_value(analysis, "Điểm mạnh CV", "Diem manh CV", default=[]) or [])[:3])
         weaknesses = ", ".join((_get_record_value(analysis, "Điểm yếu CV", "Diem yeu CV", default=[]) or [])[:2])
+        gaps = "; ".join(_candidate_matching_gaps(candidate, limit=2)) or "Không có dữ liệu khoảng trống cụ thể"
         profile_lines.append(
             f"{index}. {candidate.get('candidateName', '')} | "
             f"Rank: {_get_record_value(analysis, 'Hạng', 'Hang', default='')} | "
             f"Score: {_get_record_value(analysis, 'Tổng điểm', 'Tong diem', default=0)} | "
             f"Title: {candidate.get('jobTitle', '')} | "
             f"Level: {candidate.get('experienceLevel', '')} | "
-            f"Strengths: {strengths} | Weaknesses: {weaknesses}"
+            f"Strengths: {strengths} | Weaknesses: {weaknesses} | Gaps: {gaps}"
         )
 
     return render_prompt(

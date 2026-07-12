@@ -69,6 +69,7 @@ class StructuredCandidateAnalysis(BaseModel):
     direct_match_matrix: List[Dict[str, Any]] = Field(default_factory=list, alias="Ma tran doi sanh truc tiep")
     strict_score_breakdown: Dict[str, Any] = Field(default_factory=dict, alias="Phan ra diem so nghiem ngat")
     interview_questions: List[str] = Field(default_factory=list, alias="Cau hoi phong van")
+    self_review: str = Field(default="", alias="Tu tham dinh")
 
 
 class HrSummaryExperience(BaseModel):
@@ -247,3 +248,19 @@ class QuickCvScoreResponse(BaseModel):
     model: str
     usage_note: str = "AI output is a screening aid and should be reviewed by a recruiter."
     saved_score_id: str | None = Field(default=None, alias="savedScoreId")
+
+
+class CandidateChatRequest(BaseModel):
+    candidate_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    message: str = Field(min_length=1)
+    job_position: str = ""
+    recruiter_context: str | None = None
+
+
+class CandidateChatResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    response_text: str = Field(alias="responseText")
+    cited_criteria: List[str] = Field(default_factory=list, alias="citedCriteria")
+    confidence: str = "medium"
+    saved_record_id: str | None = Field(default=None, alias="savedRecordId")

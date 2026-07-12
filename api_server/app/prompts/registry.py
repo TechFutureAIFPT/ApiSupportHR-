@@ -10,14 +10,16 @@ PROMPTS_ROOT = Path(__file__).resolve().parent
 ACTIVE_PROMPT_VERSIONS: dict[str, str] = {
     "candidate_refinement/education_validation": "v1",
     "candidate_refinement/refine_name": "v1",
-    "cv_analysis/analyze_entries": "v7",
+    "chatbot/candidate_focus": "v1",
+    "cv_analysis/analyze_entries": "v8",
     "file_extraction/ocr_document": "v1",
     "mobile_jd/standardize": "v1",
+    "salary/analyze": "v1",
     "workflow/extract_hard_filters": "v1",
     "workflow/extract_job_position": "v1",
-    "workflow/interview_comparative": "v1",
-    "workflow/interview_general": "v1",
-    "workflow/interview_specific": "v1",
+    "workflow/interview_comparative": "v2",
+    "workflow/interview_general": "v2",
+    "workflow/interview_specific": "v2",
     "workflow/jd_structure": "v1",
 }
 

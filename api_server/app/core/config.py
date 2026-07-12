@@ -64,6 +64,7 @@ class Settings:
         self.google_api_key = os.getenv("GOOGLE_API_KEY", "")
         self.google_picker_api_key = os.getenv("GOOGLE_PICKER_API_KEY", "")
         self.google_cloud_vision_api_key = os.getenv("GOOGLE_CLOUD_VISION_API_KEY", "")
+        self.rapidapi_key = os.getenv("RAPIDAPI_KEY", "").strip()
         self.google_oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
         self.google_oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
         self.google_oauth_redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "")

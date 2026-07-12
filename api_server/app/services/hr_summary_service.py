@@ -258,7 +258,96 @@ def _build_red_flags(
     if gap and gap not in red_flags:
         red_flags.append(gap)
 
-    return red_flags[:5]
+    return red_flags
+
+
+_VALID_SKILL_STATUS = {"Đạt", "Không đạt", "Đạt một phần"}
+_VERDICT_TO_SKILL_STATUS = {
+    "strong": "Đạt",
+    "partial": "Đạt một phần",
+    "weak": "Không đạt",
+    "missing": "Không đạt",
+}
+
+
+def _normalize_gemini_red_flags(existing: Dict[str, Any]) -> List[str]:
+    """Giữ lại các cảnh báo Gemini đã suy luận (MODULE 1-7 trong prompt) thay vì vứt bỏ."""
+    raw = existing.get("canh_bao_red_flag")
+    if not isinstance(raw, list):
+        return []
+
+    flags: List[str] = []
+    for item in raw:
+        text = str(item or "").strip()
+        if text and text not in flags:
+            flags.append(text)
+    return flags
+
+
+def _index_gemini_skill_rows(existing: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """Index danh_gia_ky_nang do Gemini trả về (đã đúng shape) theo tên kỹ năng đã normalize."""
+    raw = existing.get("danh_gia_ky_nang")
+    index: Dict[str, Dict[str, str]] = {}
+    if not isinstance(raw, list):
+        return index
+
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("ten_ky_nang") or "").strip()
+        status = str(item.get("muc_do_dap_ung") or "").strip()
+        evidence = str(item.get("bang_chung_tu_cv") or "").strip()
+        if not name or status not in _VALID_SKILL_STATUS or not evidence:
+            continue
+        key = _normalize_ascii(name)
+        if key and key not in index:
+            index[key] = {"muc_do_dap_ung": status, "bang_chung_tu_cv": evidence}
+    return index
+
+
+def _lookup_gemini_skill_row(skill: str, gemini_skill_index: Dict[str, Dict[str, str]]) -> Dict[str, str] | None:
+    normalized_skill = _normalize_ascii(skill)
+    if not normalized_skill:
+        return None
+    if normalized_skill in gemini_skill_index:
+        return gemini_skill_index[normalized_skill]
+    for key, row in gemini_skill_index.items():
+        if normalized_skill in key or key in normalized_skill:
+            return row
+    return None
+
+
+def _lookup_chi_tiet_skill_row(skill: str, chi_tiet: Any) -> Dict[str, str] | None:
+    """Fallback: suy ra verdict kỹ năng từ advancedBreakdown.matched_signals/missing_requirements
+    của từng tiêu chí trong Chi tiet, khi Gemini không liệt kê skill này trong danh_gia_ky_nang."""
+    normalized_skill = _normalize_ascii(skill)
+    if not normalized_skill or not isinstance(chi_tiet, list):
+        return None
+
+    for item in chi_tiet:
+        if not isinstance(item, dict):
+            continue
+        breakdown = item.get("advancedBreakdown")
+        if not isinstance(breakdown, dict):
+            continue
+        evidence_list = [str(e).strip() for e in (breakdown.get("evidence_highlights") or []) if str(e).strip()]
+
+        for signal in breakdown.get("matched_signals") or []:
+            if normalized_skill in _normalize_ascii(str(signal)):
+                evidence = evidence_list[0] if evidence_list else str(signal).strip()
+                return {"muc_do_dap_ung": "Đạt", "bang_chung_tu_cv": evidence[:220]}
+
+        for gap in breakdown.get("missing_requirements") or []:
+            if normalized_skill in _normalize_ascii(str(gap)):
+                return {"muc_do_dap_ung": "Không đạt", "bang_chung_tu_cv": "Không tìm thấy trong CV"}
+
+        verdict = str(breakdown.get("verdict") or "").strip().lower()
+        tieu_chi = _normalize_ascii(str(item.get("Tieu chi") or ""))
+        if verdict in _VERDICT_TO_SKILL_STATUS and normalized_skill and normalized_skill in tieu_chi:
+            evidence = evidence_list[0] if evidence_list else "Không tìm thấy trong CV"
+            return {"muc_do_dap_ung": _VERDICT_TO_SKILL_STATUS[verdict], "bang_chung_tu_cv": evidence[:220]}
+
+    return None
 
 
 def _build_overview(
@@ -297,8 +386,15 @@ def build_hr_summary(
     experience_result = _experience_conclusion(required_years_text, profile)
 
     required_skills = _extract_required_skills(jd_text, hard_filters)
+    gemini_skill_index = _index_gemini_skill_rows(existing)
+    chi_tiet = analysis.get("Chi tiet") if isinstance(analysis.get("Chi tiet"), list) else []
+
     skill_rows = []
     for skill in required_skills:
+        gemini_row = _lookup_gemini_skill_row(skill, gemini_skill_index) or _lookup_chi_tiet_skill_row(skill, chi_tiet)
+        if gemini_row is not None:
+            skill_rows.append({"ten_ky_nang": skill, **gemini_row})
+            continue
         evidence = _find_skill_evidence(skill, cv_text)
         skill_rows.append(
             {
@@ -308,7 +404,13 @@ def build_hr_summary(
             }
         )
 
-    red_flags = _build_red_flags(candidate, screening_summary, required_years_text, experience_result, cv_text)
+    rule_based_red_flags = _build_red_flags(candidate, screening_summary, required_years_text, experience_result, cv_text)
+    red_flags = list(rule_based_red_flags)
+    for flag in _normalize_gemini_red_flags(existing):
+        if flag not in red_flags:
+            red_flags.append(flag)
+    red_flags = red_flags[:6]
+
     overview = _build_overview(candidate, profile, red_flags, skill_rows)
     raw_score = existing.get("tong_diem_phu_hop")
     if isinstance(raw_score, (int, float)):

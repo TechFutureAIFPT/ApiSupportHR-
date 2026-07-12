@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from app.api.routes import account_router, ai_router, files_router, mobile_jd_router
+from app.api.routes import account_router, ai_router, files_router, mobile_jd_router, salary_router
 from app.core.config import get_settings
 from app.services.security_service import apply_request_rate_limits, log_audit_event, resolve_client_ip
 from app.utils.text_normalization import normalize_payload_text
@@ -118,6 +118,7 @@ api_app.include_router(ai_router)
 api_app.include_router(files_router)
 api_app.include_router(account_router)
 api_app.include_router(mobile_jd_router)
+api_app.include_router(salary_router)
 
 
 @api_app.get("/health")

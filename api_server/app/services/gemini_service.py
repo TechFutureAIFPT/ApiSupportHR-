@@ -41,10 +41,6 @@ def _normalize_config(value: Any) -> Any:
             if inner is None:
                 continue
             normalized_key = _camel_to_snake(key)
-            if normalized_key == "thinking_config":
-                # The Python SDK can fail on no-op thinkingConfig payloads for
-                # some Flash aliases. Omitting it keeps the request portable.
-                continue
             if normalized_key == "response_schema":
                 # The schema contains output field names such as candidateName.
                 # Do not snake_case nested JSON Schema properties.
@@ -80,6 +76,10 @@ def _get_keys(api_keys: Iterable[str] | None = None) -> List[str]:
     return keys
 
 
+def _supports_thinking_config(model_name: str) -> bool:
+    return "gemini-2.5" in (model_name or "").lower()
+
+
 def _fallback_models(model: str) -> Iterable[str]:
     seen: set[str] = set()
     for candidate in (model, "gemini-2.5-flash", "gemini-2.0-flash"):
@@ -111,13 +111,17 @@ def generate_content(
     normalized_config = _normalize_config(config) if config is not None else None
 
     for target_model in _fallback_models(model):
+        attempt_config = normalized_config
+        if isinstance(attempt_config, dict) and "thinking_config" in attempt_config and not _supports_thinking_config(target_model):
+            attempt_config = {key: value for key, value in attempt_config.items() if key != "thinking_config"}
+
         for index, key in enumerate(keys, start=1):
             try:
                 client = genai.Client(api_key=key)
                 response = client.models.generate_content(
                     model=target_model,
                     contents=contents,
-                    config=normalized_config,
+                    config=attempt_config,
                 )
                 return response.text or ""
             except Exception as error:  # pragma: no cover - network/provider path
