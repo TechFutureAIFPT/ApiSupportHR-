@@ -75,6 +75,20 @@ def delete_prefix(prefix: str) -> int:
     return deleted
 
 
+def acquire_lock(key: str, ttl_seconds: int) -> bool:
+    """SET NX EX ngắn hạn dùng để debounce công việc nặng (vd rebuild view) khi cùng 1 user
+    kích hoạt nhiều lần liên tiếp trong vài giây. Trả True nếu lock vừa được acquire (nên chạy),
+    False nếu đã có lock (nên bỏ qua). Nếu Redis không khả dụng, luôn trả True (không debounce
+    được thì vẫn ưu tiên chạy đủ, an toàn hơn là bỏ sót việc cần làm)."""
+    client = get_redis_client()
+    if client is None:
+        return True
+    try:
+        return bool(client.set(key, "1", nx=True, ex=max(1, ttl_seconds)))
+    except RedisError:
+        return True
+
+
 def increment(key: str, ttl_seconds: int) -> int | None:
     client = get_redis_client()
     if client is None:

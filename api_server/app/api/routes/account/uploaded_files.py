@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import get_current_user
+from app.api.response_utils import cached_json_response
 from app.schemas.account import AuthenticatedUser, UploadedFileCreateRequest, UploadedFilesBatchRequest
-from app.services.account import uploaded_file_service
+from app.services.account import response_cache_service, uploaded_file_service
 from app.services import vector_index_service
 
 
@@ -31,19 +32,33 @@ def rebuild_uploaded_files_vector_index(
 
 @router.get("/uploaded-files")
 def list_uploaded_files(
+    request: Request,
     limit_count: int = Query(default=50, ge=1, le=500),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return uploaded_file_service.get_user_files(current_user, limit_count=limit_count)
+    cache_key_name = response_cache_service.account_cache_key("uploaded_files", current_user.uid, "all", str(limit_count))
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key_name,
+        "uploaded_files",
+        lambda: uploaded_file_service.get_user_files(current_user, limit_count=limit_count),
+    )
+    return cached_json_response(request, cached)
 
 
 @router.get("/uploaded-files/by-type/{file_type}")
 def list_uploaded_files_by_type(
+    request: Request,
     file_type: str,
     limit_count: int = Query(default=50, ge=1, le=500),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return uploaded_file_service.get_user_files_by_type(current_user, file_type=file_type, limit_count=limit_count)
+    cache_key_name = response_cache_service.account_cache_key("uploaded_files", current_user.uid, "type", file_type, str(limit_count))
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key_name,
+        "uploaded_files",
+        lambda: uploaded_file_service.get_user_files_by_type(current_user, file_type=file_type, limit_count=limit_count),
+    )
+    return cached_json_response(request, cached)
 
 
 @router.get("/uploaded-files/by-session/{session_id}")
@@ -68,5 +83,11 @@ def vectorize_uploaded_file(file_id: str, current_user: AuthenticatedUser = Depe
 
 
 @router.get("/uploaded-files/stats")
-def get_uploaded_file_stats(current_user: AuthenticatedUser = Depends(get_current_user)):
-    return uploaded_file_service.get_file_stats(current_user)
+def get_uploaded_file_stats(request: Request, current_user: AuthenticatedUser = Depends(get_current_user)):
+    cache_key_name = response_cache_service.account_cache_key("uploaded_files", current_user.uid, "stats")
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key_name,
+        "uploaded_files",
+        lambda: uploaded_file_service.get_file_stats(current_user),
+    )
+    return cached_json_response(request, cached)

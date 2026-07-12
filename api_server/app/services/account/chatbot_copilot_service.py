@@ -347,17 +347,17 @@ def reply_to_chatbot_session(
         },
     }
 
-    chatbot_service.add_chatbot_messages(user, session_id, [user_message, assistant_message])
-    chatbot_service.update_chatbot_session_state(
-        user,
-        session_id,
-        {
-            "candidateBriefs": latest_candidate_briefs,
-            "lastSuggestedCandidateIds": provider_payload["suggestedCandidateIds"],
-            "lastFocusCandidateId": provider_payload["focusCandidateId"] or "",
-            "lastMessageAt": assistant_message["timestamp"],
-        },
-    )
+    # Gộp thành 1 đọc (snapshot đã fetch ở đầu hàm) + 1 ghi duy nhất, thay vì
+    # add_chatbot_messages/update_chatbot_session_state mỗi hàm tự đọc lại session
+    # rồi ghi riêng (trước đây: 3 đọc + 2 ghi cho mỗi lần gửi tin nhắn).
+    messages_patch = chatbot_service.build_messages_patch(snapshot, [user_message, assistant_message])
+    state_patch = {
+        "candidateBriefs": latest_candidate_briefs,
+        "lastSuggestedCandidateIds": provider_payload["suggestedCandidateIds"],
+        "lastFocusCandidateId": provider_payload["focusCandidateId"] or "",
+        "lastMessageAt": assistant_message["timestamp"],
+    }
+    chatbot_service.apply_session_patch(user, snapshot, {**messages_patch, **state_patch})
 
     return {
         "sessionId": session_id,

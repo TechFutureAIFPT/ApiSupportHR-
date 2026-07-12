@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import get_current_user
+from app.api.response_utils import cached_json_response
 from app.schemas.account import (
     AuthenticatedUser,
     ChatbotMessagesRequest,
@@ -10,7 +11,7 @@ from app.schemas.account import (
     ChatbotReplyResponse,
     ChatbotSessionCreateRequest,
 )
-from app.services.account import chatbot_copilot_service, chatbot_service
+from app.services.account import chatbot_copilot_service, chatbot_service, response_cache_service
 
 
 router = APIRouter()
@@ -56,10 +57,17 @@ def reply_chatbot_session(
 
 @router.get("/chatbot/sessions")
 def list_chatbot_sessions(
+    request: Request,
     limit_count: int = Query(default=20, ge=1, le=200),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return chatbot_service.get_user_chatbot_sessions(current_user, limit_count=limit_count)
+    cache_key_name = response_cache_service.account_cache_key("chatbot_sessions", current_user.uid, "list", str(limit_count))
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key_name,
+        "chatbot",
+        lambda: chatbot_service.get_user_chatbot_sessions(current_user, limit_count=limit_count),
+    )
+    return cached_json_response(request, cached)
 
 
 @router.get("/chatbot/sessions/{session_id}")
@@ -78,5 +86,11 @@ def delete_chatbot_session(session_id: str, current_user: AuthenticatedUser = De
 
 
 @router.get("/chatbot/stats")
-def get_chatbot_stats(current_user: AuthenticatedUser = Depends(get_current_user)):
-    return chatbot_service.get_chatbot_session_stats(current_user)
+def get_chatbot_stats(request: Request, current_user: AuthenticatedUser = Depends(get_current_user)):
+    cache_key_name = response_cache_service.account_cache_key("chatbot_sessions", current_user.uid, "stats")
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key_name,
+        "chatbot",
+        lambda: chatbot_service.get_chatbot_session_stats(current_user),
+    )
+    return cached_json_response(request, cached)

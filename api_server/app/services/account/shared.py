@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Iterable
+
+
+logger = logging.getLogger("app.firestore.optimized_docs")
 
 
 def to_millis(value: Any) -> int:
@@ -35,7 +39,11 @@ def optimized_docs(collection_ref: Any, uid: str, limit_count: int, timestamp_fi
             .limit(limit_count)
             .stream()
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "optimized_docs fallback to full-scan collection=%s uid=%s field=%s error=%s",
+            getattr(collection_ref, "id", "?"), uid, timestamp_field, exc,
+        )
         return sorted_docs(
             list(collection_ref.where("uid", "==", uid).stream()),
             timestamp_field,

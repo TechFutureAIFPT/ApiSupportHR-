@@ -75,5 +75,11 @@ def get_synced_history(
 
 
 @router.get("/sync/stats")
-def get_sync_stats(current_user: AuthenticatedUser = Depends(get_current_user)):
-    return history_service.get_sync_stats(current_user)
+def get_sync_stats(request: Request, current_user: AuthenticatedUser = Depends(get_current_user)):
+    cache_key_name = response_cache_service.account_cache_key("sync_stats", current_user.uid)
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key_name,
+        "sync_stats",
+        lambda: history_service.get_sync_stats(current_user),
+    )
+    return cached_json_response(request, cached)

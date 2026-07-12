@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any
 
+from app.integrations import redis_cache
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account import view_sync_service
 from app.services.account.shared import serialize, sorted_docs
 
 
+logger = logging.getLogger("app.firestore.feedback")
+
 POSITIVE_ACTIONS = {"like", "shortlist", "interview", "hire"}
 NEGATIVE_ACTIONS = {"dislike", "reject"}
+ALL_KNOWN_ACTIONS = sorted(POSITIVE_ACTIONS | NEGATIVE_ACTIONS)
 HIGH_SEVERITY_SCORE_DELTA = 15.0
 MEDIUM_SEVERITY_SCORE_DELTA = 8.0
+
+
+def _invalidate_feedback_cache(uid: str) -> None:
+    redis_cache.delete_prefix(f"feedback:{uid}:")
 
 
 def _first_non_empty(*values: Any) -> str:
@@ -181,7 +190,32 @@ def save_feedback(user: AuthenticatedUser, payload: dict[str, Any]) -> str:
     normalized = _normalize_feedback_payload(user, payload, doc_id=doc_id, existing=current)
     doc_ref.set(normalized, merge=True)
     view_sync_service.refresh_user_views(user, "feedback", rebuild_mobile_inbox=True)
+    _invalidate_feedback_cache(user.uid)
     return doc_id
+
+
+def _build_feedback_query(
+    user: AuthenticatedUser,
+    *,
+    session_id: str | None = None,
+    history_id: str | None = None,
+    sync_history_id: str | None = None,
+    candidate_id: str | None = None,
+    action: str | None = None,
+) -> Any:
+    query = repo.analysis_feedback().where("uid", "==", user.uid)
+    if sync_history_id:
+        query = query.where("syncHistoryId", "==", sync_history_id)
+    if history_id:
+        query = query.where("historyId", "==", history_id)
+    if session_id:
+        query = query.where("sessionId", "==", session_id)
+    if candidate_id:
+        query = query.where("candidateId", "==", candidate_id)
+    normalized_action = (action or "").strip().lower()
+    if normalized_action:
+        query = query.where("action", "==", normalized_action)
+    return query
 
 
 def list_feedback(
@@ -194,26 +228,21 @@ def list_feedback(
     candidate_id: str | None = None,
     action: str | None = None,
 ) -> list[dict[str, Any]]:
-    docs = list(repo.analysis_feedback().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "updatedAt")
-    normalized_action = (action or "").strip().lower()
-    items: list[dict[str, Any]] = []
-    for doc in ordered:
-        data = serialize(doc.to_dict() or {})
-        if session_id and data.get("sessionId") != session_id:
-            continue
-        if history_id and data.get("historyId") != history_id:
-            continue
-        if sync_history_id and data.get("syncHistoryId") != sync_history_id:
-            continue
-        if candidate_id and data.get("candidateId") != candidate_id:
-            continue
-        if normalized_action and str(data.get("action") or "").lower() != normalized_action:
-            continue
-        items.append({**data, "id": doc.id})
-        if len(items) >= limit_count:
-            break
-    return items
+    query = _build_feedback_query(
+        user,
+        session_id=session_id,
+        history_id=history_id,
+        sync_history_id=sync_history_id,
+        candidate_id=candidate_id,
+        action=action,
+    )
+    try:
+        docs = list(query.order_by("updatedAt", direction="DESCENDING").limit(limit_count).stream())
+    except Exception as exc:
+        logger.warning("feedback fallback to full-scan uid=%s error=%s", user.uid, exc)
+        docs = sorted_docs(list(query.stream()), "updatedAt")[:limit_count]
+
+    return [{**serialize(doc.to_dict() or {}), "id": doc.id} for doc in docs]
 
 
 def get_feedback_by_id(user: AuthenticatedUser, feedback_id: str) -> dict[str, Any] | None:
@@ -235,6 +264,7 @@ def delete_feedback(user: AuthenticatedUser, feedback_id: str) -> bool:
         return False
     snapshot.reference.delete()
     view_sync_service.refresh_user_views(user, "feedback", rebuild_mobile_inbox=True)
+    _invalidate_feedback_cache(user.uid)
     return True
 
 
@@ -245,26 +275,27 @@ def get_feedback_stats(
     history_id: str | None = None,
     sync_history_id: str | None = None,
 ) -> dict[str, Any]:
-    entries = list_feedback(
-        user,
-        limit_count=1000,
-        session_id=session_id,
-        history_id=history_id,
-        sync_history_id=sync_history_id,
+    base_query = _build_feedback_query(
+        user, session_id=session_id, history_id=history_id, sync_history_id=sync_history_id,
     )
+    total = int(base_query.count().get()[0][0].value)
     actions_count: dict[str, int] = {}
-    for item in entries:
-        action = str(item.get("action") or "").lower() or "unknown"
-        actions_count[action] = actions_count.get(action, 0) + 1
-
+    for action in ALL_KNOWN_ACTIONS:
+        count = int(base_query.where("action", "==", action).count().get()[0][0].value)
+        if count > 0:
+            actions_count[action] = count
     positive_count = sum(actions_count.get(action, 0) for action in POSITIVE_ACTIONS)
     negative_count = sum(actions_count.get(action, 0) for action in NEGATIVE_ACTIONS)
 
+    recent_entries = list_feedback(
+        user, limit_count=5, session_id=session_id, history_id=history_id, sync_history_id=sync_history_id,
+    )
+
     return {
-        "totalFeedback": len(entries),
+        "totalFeedback": total,
         "actionsCount": actions_count,
         "positiveCount": positive_count,
         "negativeCount": negative_count,
-        "latestFeedbackAt": entries[0].get("updatedAt") if entries else None,
-        "recentEntries": entries[:5],
+        "latestFeedbackAt": recent_entries[0].get("updatedAt") if recent_entries else None,
+        "recentEntries": recent_entries,
     }

@@ -3,20 +3,22 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.integrations import redis_cache
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
-from app.services.account.shared import serialize, sorted_docs
+from app.services.account.shared import fast_cleanup, optimized_docs, serialize
 
 
 MAX_SESSIONS_PER_USER = 100
 MAX_MESSAGES_PER_SESSION = 200
 
 
+def _invalidate_chatbot_sessions_cache(uid: str) -> None:
+    redis_cache.delete_prefix(f"chatbot_sessions:{uid}:")
+
+
 def cleanup_chatbot_sessions(user: AuthenticatedUser, keep_count: int = MAX_SESSIONS_PER_USER) -> None:
-    docs = list(repo.chatbot_sessions().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "updatedAt")
-    for doc in ordered[keep_count:]:
-        doc.reference.delete()
+    fast_cleanup(repo.chatbot_sessions(), user.uid, keep_count, timestamp_field="updatedAt")
 
 
 def get_owned_chatbot_session_snapshot(user: AuthenticatedUser, session_id: str):
@@ -58,14 +60,12 @@ def create_chatbot_session(
         }
     )
     cleanup_chatbot_sessions(user, MAX_SESSIONS_PER_USER)
+    _invalidate_chatbot_sessions_cache(user.uid)
     return doc_ref.id
 
 
-def add_chatbot_messages(user: AuthenticatedUser, session_id: str, messages: list[dict[str, object]]) -> bool:
-    snapshot = get_owned_chatbot_session_snapshot(user, session_id)
-    if snapshot is None:
-        return False
-
+def build_messages_patch(snapshot: Any, messages: list[dict[str, object]]) -> dict[str, Any]:
+    """Tính patch cho việc thêm message vào 1 snapshot đã fetch sẵn, không tự đọc lại document."""
     data = snapshot.to_dict() or {}
     current_messages = list(data.get("messages") or [])
     current_messages.extend(messages)
@@ -77,15 +77,28 @@ def add_chatbot_messages(user: AuthenticatedUser, session_id: str, messages: lis
         if current_messages
         else int(datetime.now(timezone.utc).timestamp() * 1000)
     )
-    snapshot.reference.set(
-        {
-            "messages": current_messages,
-            "messageCount": len(current_messages),
-            "updatedAt": repo.server_timestamp(),
-            "lastMessageAt": last_message_at,
-        },
-        merge=True,
-    )
+    return {
+        "messages": current_messages,
+        "messageCount": len(current_messages),
+        "lastMessageAt": last_message_at,
+    }
+
+
+def apply_session_patch(user: AuthenticatedUser, snapshot: Any, patch: dict[str, Any]) -> None:
+    """Ghi 1 patch (đã gộp sẵn) vào snapshot đã fetch sẵn — 1 lệnh set(merge=True) duy nhất."""
+    payload = dict(patch)
+    payload["updatedAt"] = repo.server_timestamp()
+    snapshot.reference.set(payload, merge=True)
+    _invalidate_chatbot_sessions_cache(user.uid)
+
+
+def add_chatbot_messages(user: AuthenticatedUser, session_id: str, messages: list[dict[str, object]]) -> bool:
+    snapshot = get_owned_chatbot_session_snapshot(user, session_id)
+    if snapshot is None:
+        return False
+
+    patch = build_messages_patch(snapshot, messages)
+    apply_session_patch(user, snapshot, patch)
     return True
 
 
@@ -94,16 +107,13 @@ def update_chatbot_session_state(user: AuthenticatedUser, session_id: str, paylo
     if snapshot is None:
         return False
 
-    next_payload = dict(payload)
-    next_payload["updatedAt"] = repo.server_timestamp()
-    snapshot.reference.set(next_payload, merge=True)
+    apply_session_patch(user, snapshot, payload)
     return True
 
 
 def get_user_chatbot_sessions(user: AuthenticatedUser, limit_count: int = 20) -> list[dict[str, object]]:
-    docs = list(repo.chatbot_sessions().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "updatedAt")[:limit_count]
-    return [{"id": doc.id, **serialize(doc.to_dict())} for doc in ordered]
+    docs = optimized_docs(repo.chatbot_sessions(), user.uid, limit_count, timestamp_field="updatedAt")
+    return [{"id": doc.id, **serialize(doc.to_dict())} for doc in docs]
 
 
 def get_chatbot_session(user: AuthenticatedUser, session_id: str) -> dict[str, object] | None:
@@ -124,6 +134,7 @@ def delete_chatbot_session(user: AuthenticatedUser, session_id: str) -> bool:
     if snapshot is None:
         return False
     snapshot.reference.delete()
+    _invalidate_chatbot_sessions_cache(user.uid)
     return True
 
 

@@ -1,21 +1,27 @@
 from __future__ import annotations
 
+import logging
+
+from app.integrations import redis_cache
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.persistence_service import save_file_extraction
-from app.services.account.shared import serialize, sorted_docs
+from app.services.account.shared import fast_cleanup, serialize, sorted_docs
 from app.services import vector_index_service
 
+
+logger = logging.getLogger("app.firestore.uploaded_files")
 
 MAX_FILES_PER_USER = 500
 MAX_EXTRACTED_TEXT_LENGTH = 10000
 
 
+def _invalidate_uploaded_files_cache(uid: str) -> None:
+    redis_cache.delete_prefix(f"uploaded_files:{uid}:")
+
+
 def cleanup_uploaded_files(user: AuthenticatedUser, keep_count: int = MAX_FILES_PER_USER) -> None:
-    docs = list(repo.uploaded_files().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "uploadedAt")
-    for doc in ordered[keep_count:]:
-        doc.reference.delete()
+    fast_cleanup(repo.uploaded_files(), user.uid, keep_count, timestamp_field="uploadedAt")
 
 
 def save_uploaded_file(user: AuthenticatedUser, payload: dict[str, object]) -> str:
@@ -53,6 +59,7 @@ def save_uploaded_file(user: AuthenticatedUser, payload: dict[str, object]) -> s
     )
     vector_index_service.try_sync_uploaded_file_to_vector_store(user, doc_ref.id, stored_payload)
     cleanup_uploaded_files(user, MAX_FILES_PER_USER)
+    _invalidate_uploaded_files_cache(user.uid)
     return doc_ref.id
 
 
@@ -60,22 +67,53 @@ def save_uploaded_files(user: AuthenticatedUser, files: list[dict[str, object]])
     return [save_uploaded_file(user, file_payload) for file_payload in files]
 
 
+def _query_uploaded_files(
+    user: AuthenticatedUser,
+    *,
+    file_type: str | None = None,
+    session_id: str | None = None,
+    limit_count: int | None = None,
+) -> list[object]:
+    """Đẩy filter (fileType/analysisSessionId) và order_by+limit xuống Firestore
+    thay vì tải toàn bộ collection rồi lọc bằng Python."""
+    base_query = repo.uploaded_files().where("uid", "==", user.uid)
+    if file_type:
+        base_query = base_query.where("fileType", "==", file_type)
+    if session_id:
+        base_query = base_query.where("analysisSessionId", "==", session_id)
+
+    try:
+        query = base_query.order_by("uploadedAt", direction="DESCENDING")
+        if limit_count:
+            query = query.limit(limit_count)
+        return list(query.stream())
+    except Exception as exc:
+        logger.warning(
+            "uploaded_files fallback to full-scan uid=%s file_type=%s session_id=%s error=%s",
+            user.uid, file_type, session_id, exc,
+        )
+        ordered = sorted_docs(list(base_query.stream()), "uploadedAt")
+        return ordered[:limit_count] if limit_count else ordered
+
+
 def list_uploaded_files(user: AuthenticatedUser) -> list[dict[str, object]]:
-    docs = list(repo.uploaded_files().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "uploadedAt")
-    return [{"id": doc.id, **serialize(doc.to_dict())} for doc in ordered]
+    docs = _query_uploaded_files(user)
+    return [{"id": doc.id, **serialize(doc.to_dict())} for doc in docs]
 
 
 def get_user_files(user: AuthenticatedUser, limit_count: int = 50) -> list[dict[str, object]]:
-    return list_uploaded_files(user)[:limit_count]
+    docs = _query_uploaded_files(user, limit_count=limit_count)
+    return [{"id": doc.id, **serialize(doc.to_dict())} for doc in docs]
 
 
 def get_user_files_by_type(user: AuthenticatedUser, file_type: str, limit_count: int = 50) -> list[dict[str, object]]:
-    return [item for item in list_uploaded_files(user) if item.get("fileType") == file_type][:limit_count]
+    docs = _query_uploaded_files(user, file_type=file_type, limit_count=limit_count)
+    return [{"id": doc.id, **serialize(doc.to_dict())} for doc in docs]
 
 
 def get_files_by_session(user: AuthenticatedUser, session_id: str) -> list[dict[str, object]]:
-    return [item for item in list_uploaded_files(user) if item.get("analysisSessionId") == session_id]
+    docs = _query_uploaded_files(user, session_id=session_id)
+    return [{"id": doc.id, **serialize(doc.to_dict())} for doc in docs]
 
 
 def delete_file(user: AuthenticatedUser, file_id: str) -> bool:
@@ -87,6 +125,7 @@ def delete_file(user: AuthenticatedUser, file_id: str) -> bool:
         return False
     snapshot.reference.delete()
     vector_index_service.delete_uploaded_file_vector_record(file_id)
+    _invalidate_uploaded_files_cache(user.uid)
     return True
 
 
@@ -102,14 +141,15 @@ def touch_file(user: AuthenticatedUser, file_id: str) -> bool:
 
 
 def get_file_stats(user: AuthenticatedUser) -> dict[str, object]:
-    files = list_uploaded_files(user)
-    total_cvs = sum(1 for item in files if item.get("fileType") == "cv")
-    total_jds = sum(1 for item in files if item.get("fileType") == "jd")
-    total_size = sum(int(item.get("fileSize") or 0) for item in files)
+    base_query = repo.uploaded_files().where("uid", "==", user.uid)
+    total_files = int(base_query.count().get()[0][0].value)
+    total_cvs = int(base_query.where("fileType", "==", "cv").count().get()[0][0].value)
+    total_jds = int(base_query.where("fileType", "==", "jd").count().get()[0][0].value)
+    total_size = int(base_query.sum("fileSize").get()[0][0].value or 0)
     return {
-        "totalFiles": len(files),
+        "totalFiles": total_files,
         "totalCVs": total_cvs,
         "totalJDs": total_jds,
         "totalSizeBytes": total_size,
-        "recentFiles": files[:5],
+        "recentFiles": get_user_files(user, limit_count=5),
     }

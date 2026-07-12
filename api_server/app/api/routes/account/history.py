@@ -81,6 +81,7 @@ def save_analysis_feedback(payload: AnalysisFeedbackRequest, current_user: Authe
 
 @router.get("/history/feedback", response_model=list[AnalysisFeedbackResponse])
 def list_analysis_feedback(
+    request: Request,
     limit_count: int = Query(default=50, ge=1, le=500),
     session_id: str | None = None,
     history_id: str | None = None,
@@ -89,30 +90,48 @@ def list_analysis_feedback(
     action: str | None = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return feedback_service.list_feedback(
-        current_user,
-        limit_count=limit_count,
-        session_id=session_id,
-        history_id=history_id,
-        sync_history_id=sync_history_id,
-        candidate_id=candidate_id,
-        action=action,
+    cache_key = response_cache_service.account_cache_key(
+        "feedback", current_user.uid, "list", str(limit_count),
+        session_id or "", history_id or "", sync_history_id or "", candidate_id or "", action or "",
     )
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key,
+        "feedback",
+        lambda: feedback_service.list_feedback(
+            current_user,
+            limit_count=limit_count,
+            session_id=session_id,
+            history_id=history_id,
+            sync_history_id=sync_history_id,
+            candidate_id=candidate_id,
+            action=action,
+        ),
+    )
+    return cached_json_response(request, cached)
 
 
 @router.get("/history/feedback/stats", response_model=AnalysisFeedbackStatsResponse)
 def get_analysis_feedback_stats(
+    request: Request,
     session_id: str | None = None,
     history_id: str | None = None,
     sync_history_id: str | None = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return feedback_service.get_feedback_stats(
-        current_user,
-        session_id=session_id,
-        history_id=history_id,
-        sync_history_id=sync_history_id,
+    cache_key = response_cache_service.account_cache_key(
+        "feedback", current_user.uid, "stats", session_id or "", history_id or "", sync_history_id or "",
     )
+    cached = response_cache_service.get_or_build_cached_payload(
+        cache_key,
+        "feedback",
+        lambda: feedback_service.get_feedback_stats(
+            current_user,
+            session_id=session_id,
+            history_id=history_id,
+            sync_history_id=sync_history_id,
+        ),
+    )
+    return cached_json_response(request, cached)
 
 
 @router.delete("/history/feedback/{feedback_id}")

@@ -31,17 +31,6 @@ def mobile_inbox_view_doc_id(user: AuthenticatedUser, user_email: str | None = N
     return f"{user.uid}__{email_key}"
 
 
-def _stream_limited_by_uid(collection_ref: Any, uid: str, limit_count: int) -> list[Any]:
-    query = collection_ref.where("uid", "==", uid)
-    limiter = getattr(query, "limit", None)
-    if callable(limiter):
-        try:
-            query = limiter(limit_count)
-        except Exception:
-            pass
-    return list(query.stream())
-
-
 def sync_history_entry(user: AuthenticatedUser, analysis_data: dict[str, Any]) -> str:
     candidates = list(analysis_data.get("candidates") or [])
     screening_index = _build_history_screening_index([candidate for candidate in candidates if isinstance(candidate, dict)])
@@ -80,15 +69,16 @@ def get_synced_history(user: AuthenticatedUser, limit_count: int = 20) -> list[d
 
 
 def get_sync_stats(user: AuthenticatedUser) -> dict[str, Any]:
-    stat_limit = 200
-    cache_docs = _stream_limited_by_uid(repo.synced_cache(), user.uid, stat_limit)
-    history_docs = optimized_docs(repo.synced_history(), user.uid, stat_limit)
-    feedback_docs = _stream_limited_by_uid(repo.analysis_feedback(), user.uid, stat_limit)
-    last_sync_time = serialize(history_docs[0].to_dict().get("timestamp")) if history_docs else None
+    cache_count = repo.synced_cache().where("uid", "==", user.uid).count().get()[0][0].value
+    history_count = repo.synced_history().where("uid", "==", user.uid).count().get()[0][0].value
+    feedback_count = repo.analysis_feedback().where("uid", "==", user.uid).count().get()[0][0].value
+
+    last_docs = optimized_docs(repo.synced_history(), user.uid, 1)
+    last_sync_time = serialize(last_docs[0].to_dict().get("timestamp")) if last_docs else None
     return {
-        "cacheEntries": len(cache_docs),
-        "historyEntries": len(history_docs),
-        "feedbackEntries": len(feedback_docs),
+        "cacheEntries": int(cache_count),
+        "historyEntries": int(history_count),
+        "feedbackEntries": int(feedback_count),
         "lastSyncTime": last_sync_time,
     }
 
@@ -518,7 +508,10 @@ def _build_mobile_inbox_payload(
 
 
 def build_mobile_inbox_view_document(user: AuthenticatedUser, user_email: str | None = None) -> dict[str, Any]:
-    payload = _build_mobile_inbox_payload(user, history_limit=50, candidate_limit=200, user_email=user_email)
+    # candidate_limit=160 khớp mức tối đa FE thực sự yêu cầu (CVScreenerWelcome/FilteredCvLibraryPage
+    # dùng candidateLimit=160) — trước đây 200 vượt nhu cầu thật, tốn thêm nén Python + kích thước
+    # document ghi xuống Firestore không cần thiết.
+    payload = _build_mobile_inbox_payload(user, history_limit=50, candidate_limit=160, user_email=user_email)
     return {
         "uid": user.uid,
         "email": user.email,

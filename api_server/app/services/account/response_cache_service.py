@@ -50,6 +50,8 @@ def get_ttl_seconds(kind: str) -> int:
         return settings.template_cache_ttl_seconds
     if kind == "sync_cache":
         return settings.sync_cache_ttl_seconds
+    if kind in ("chatbot", "feedback", "uploaded_files"):
+        return 60
     return settings.account_cache_ttl_seconds
 
 
@@ -110,5 +112,9 @@ def invalidate_user_account_cache(uid: str) -> None:
         f"sync_history:{uid}:",
         f"templates:{uid}:",
         f"sync_cache:{uid}:",
+        f"sync_stats:{uid}:",
+        f"uploaded_files:{uid}:",
+        f"chatbot_sessions:{uid}:",
+        f"feedback:{uid}:",
     ):
         redis_cache.delete_prefix(prefix)

@@ -50,18 +50,70 @@ class FakeDocumentReference:
         self._collection.store.pop(self.id, None)
 
 
+class FakeAggregationResult:
+    def __init__(self, value: float):
+        self.value = value
+
+
+class FakeAggregationQuery:
+    def __init__(self, query: "FakeQuery", value_fn):
+        self._query = query
+        self._value_fn = value_fn
+
+    def get(self):
+        return [[FakeAggregationResult(self._value_fn(self._query._matching_payloads()))]]
+
+
 class FakeQuery:
-    def __init__(self, collection: "FakeCollection", field_name: str, expected_value: Any):
+    """Fake Firestore query hỗ trợ where() chained, order_by()+limit(), và count()/sum()
+    aggregation — đủ để test các query pattern thật (không chỉ nhánh fallback full-scan)."""
+
+    def __init__(self, collection: "FakeCollection", filters: list[tuple[str, Any]] | None = None):
         self._collection = collection
-        self._field_name = field_name
-        self._expected_value = expected_value
+        self._filters: list[tuple[str, Any]] = list(filters or [])
+        self._order_by_field: str | None = None
+        self._order_reverse = False
+        self._limit_count: int | None = None
+
+    def where(self, field_name: str, op: str, expected_value: Any) -> "FakeQuery":
+        if op != "==":
+            raise NotImplementedError("FakeQuery only supports equality filters.")
+        return FakeQuery(self._collection, self._filters + [(field_name, expected_value)])
+
+    def order_by(self, field_name: str, direction: str = "ASCENDING") -> "FakeQuery":
+        clone = FakeQuery(self._collection, self._filters)
+        clone._order_by_field = field_name
+        clone._order_reverse = direction == "DESCENDING"
+        clone._limit_count = self._limit_count
+        return clone
+
+    def limit(self, count: int) -> "FakeQuery":
+        clone = FakeQuery(self._collection, self._filters)
+        clone._order_by_field = self._order_by_field
+        clone._order_reverse = self._order_reverse
+        clone._limit_count = count
+        return clone
+
+    def _matching_payloads(self) -> list[tuple[str, dict[str, Any]]]:
+        items = [
+            (doc_id, payload)
+            for doc_id, payload in self._collection.store.items()
+            if all(payload.get(field) == value for field, value in self._filters)
+        ]
+        if self._order_by_field:
+            items.sort(key=lambda item: item[1].get(self._order_by_field) or 0, reverse=self._order_reverse)
+        if self._limit_count is not None:
+            items = items[: self._limit_count]
+        return items
 
     def stream(self) -> list[FakeDocumentSnapshot]:
-        snapshots: list[FakeDocumentSnapshot] = []
-        for doc_id, payload in self._collection.store.items():
-            if payload.get(self._field_name) == self._expected_value:
-                snapshots.append(FakeDocumentSnapshot(self._collection, doc_id))
-        return snapshots
+        return [FakeDocumentSnapshot(self._collection, doc_id) for doc_id, _ in self._matching_payloads()]
+
+    def count(self) -> FakeAggregationQuery:
+        return FakeAggregationQuery(self, lambda items: len(items))
+
+    def sum(self, field_name: str) -> FakeAggregationQuery:
+        return FakeAggregationQuery(self, lambda items: sum(float(payload.get(field_name) or 0) for _, payload in items))
 
 
 class FakeCollection:
@@ -74,7 +126,7 @@ class FakeCollection:
     def where(self, field_name: str, op: str, expected_value: Any) -> FakeQuery:
         if op != "==":
             raise NotImplementedError("FakeCollection only supports equality filters.")
-        return FakeQuery(self, field_name, expected_value)
+        return FakeQuery(self, [(field_name, expected_value)])
 
 
 class FeedbackApiTests(unittest.TestCase):
