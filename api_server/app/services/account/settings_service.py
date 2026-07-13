@@ -12,6 +12,8 @@ from app.services.account.shared import serialize
 
 SETTINGS_VERSION = 1
 ALLOWED_HISTORY_RETENTION = {50, 100, 200}
+ALLOWED_THEMES = {"light", "dark", "system"}
+ALLOWED_LANGUAGES = {"vi-VN", "en-US"}
 
 
 def _now_millis() -> int:
@@ -24,6 +26,10 @@ def _record(value: Any) -> dict[str, Any]:
 
 def _bool(value: Any, fallback: bool) -> bool:
     return value if isinstance(value, bool) else fallback
+
+
+def _enum(value: Any, allowed: set[str], fallback: str) -> str:
+    return value if isinstance(value, str) and value in allowed else fallback
 
 
 def _history_retention(value: Any, fallback: int = 50) -> int:
@@ -116,8 +122,8 @@ def normalize_user_settings(raw: Any, user: AuthenticatedUser) -> dict[str, Any]
             "sidebarDensity": "cozy" if density == "cozy" else "compact",
             "accessibleMode": _bool(ui.get("accessibleMode"), defaults["ui"]["accessibleMode"]),
             "reducedMotion": _bool(ui.get("reducedMotion"), defaults["ui"]["reducedMotion"]),
-            "language": defaults["ui"]["language"],
-            "theme": defaults["ui"]["theme"],
+            "language": _enum(ui.get("language"), ALLOWED_LANGUAGES, defaults["ui"]["language"]),
+            "theme": _enum(ui.get("theme"), ALLOWED_THEMES, defaults["ui"]["theme"]),
         },
         "account": {
             "displayName": str(account.get("displayName") or user.display_name or defaults["account"]["displayName"]),
