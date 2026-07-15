@@ -2,6 +2,13 @@
 
 FastAPI backend for CV analysis, recruiter workflow automation, Google Drive import, Firestore persistence, and feedback/evaluation loops.
 
+### Project documentation
+
+- [Project and code map](../../../../Document/01-Tai-Lieu-Du-An/00-BAN-DO-DU-AN.md)
+- [Backend from A-Z](../../../../Document/01-Tai-Lieu-Du-An/03-backend-be-tu-a-z.md)
+- [API reference](../../../../Document/01-Tai-Lieu-Du-An/04-api-reference.md)
+- [Documentation-code traceability](../../../../Document/01-Tai-Lieu-Du-An/11-MA-TRAN-TRUY-VET.md)
+
 ### Run locally
 
 ```bash
