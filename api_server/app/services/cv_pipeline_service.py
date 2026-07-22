@@ -8,11 +8,13 @@ import time
 import unicodedata
 from typing import Any
 
+from app.core.ai_contract import PIPELINE_VERSION, rank_from_score
 from app.core.config import get_settings
 from app.schemas.account import AuthenticatedUser
 from app.services.account.cache_service import (
     build_cv_jd_cache_key,
     get_cache_entry_async,
+    maintain_user_cache_async,
     stable_hash,
     sync_cache_entry_async,
 )
@@ -27,6 +29,9 @@ from app.services.cv_analysis_service import (
     normalize_candidates_against_weights,
 )
 from app.services.language_service import build_analysis_text_bundle, normalize_cv_text_for_analysis_async
+from app.services.gemini_service import embed_text
+from app.services.local_classifier_service import classify_cv_text, get_classifier_status
+from app.services.rubric_service import resolve_scoring_rubric
 from app.utils.text_normalization import normalize_display_text
 
 
@@ -187,7 +192,7 @@ def _ensure_final_rank(candidate: dict[str, Any]) -> dict[str, Any]:
     if score < 0:
         score = 0.0
     score = max(0.0, min(100.0, round(score, 1)))
-    grade = "A" if score >= 75 else "B" if score >= 50 else "C"
+    grade = rank_from_score(score)
 
     analysis.setdefault("Tong diem", score)
     analysis.setdefault(TOTAL_SCORE_KEY, score)
@@ -294,8 +299,20 @@ async def _read_cache_for_entry(
     user: AuthenticatedUser | None,
     entry: dict[str, Any],
     jd_text: str,
+    weights: dict[str, Any],
+    hard_filters: dict[str, Any],
+    rubric_version: str,
+    classifier_version: str,
 ) -> tuple[str, dict[str, Any] | None, str | None]:
-    cache_key = build_cv_jd_cache_key(_entry_cv_id(entry), jd_text)
+    cache_key = build_cv_jd_cache_key(
+        _entry_cv_id(entry),
+        jd_text,
+        cv_text=str(entry.get("text") or ""),
+        weights=weights,
+        hard_filters=hard_filters,
+        rubric_version=rubric_version,
+        classifier_version=classifier_version,
+    )
     if user is None:
         return cache_key, None, None
 
@@ -337,6 +354,115 @@ async def _sync_history_safe(
         return None
 
 
+async def _prepare_entry_context(
+    *,
+    entry: dict[str, Any],
+    jd_text: str,
+    hard_filters: dict[str, Any],
+    rubric_version: str,
+    semaphore: asyncio.Semaphore,
+) -> dict[str, Any]:
+    settings = get_settings()
+    file_name = _entry_file_name(entry)
+    raw_text = str(entry.get("text") or "")
+    warnings: list[str] = []
+    started_at = time.perf_counter()
+
+    async with semaphore:
+        try:
+            normalized_payload = await normalize_cv_text_for_analysis_async(raw_text)
+        except Exception as error:
+            warnings.append(f"language_normalize_failed:{file_name}:{error}")
+            normalized_payload = {
+                "original_text": raw_text,
+                "analysis_text": raw_text,
+                "translated_text": "",
+                "normalized_vi_text": raw_text,
+                "language": "unknown",
+                "language_confidence": 0,
+                "language_reason": "fallback",
+                "was_translated": False,
+            }
+
+        normalized_text = str(normalized_payload.get("analysis_text") or raw_text)
+
+        async def _classify() -> tuple[dict[str, Any] | None, str]:
+            try:
+                return await asyncio.to_thread(classify_cv_text, normalized_text, 5), ""
+            except Exception as error:
+                return None, str(error)
+
+        async def _embed() -> tuple[list[float] | None, str]:
+            try:
+                return await asyncio.to_thread(
+                    embed_text,
+                    normalized_text[:6000],
+                    settings.gemini_embedding_model,
+                    task="semantic_similarity",
+                ), ""
+            except Exception as error:
+                return None, str(error)
+
+        (classifier_result, classifier_error), (query_vector, embedding_error) = await asyncio.gather(
+            _classify(),
+            _embed(),
+        )
+        if classifier_error:
+            warnings.append(f"classifier_failed:{file_name}:{classifier_error}")
+        if embedding_error:
+            warnings.append(f"embedding_failed:{file_name}:{embedding_error}")
+
+        try:
+            routing_metadata = await build_routing_metadata_async(
+                jd_text,
+                normalized_text,
+                classifier_result=classifier_result,
+                translate=False,
+            )
+        except Exception as error:
+            warnings.append(f"routing_metadata_failed:{file_name}:{error}")
+            routing_metadata = default_routing_metadata()
+
+        try:
+            grounding_payload = await build_approved_grounding_context(
+                cv_text=raw_text,
+                analysis_text=normalized_text,
+                file_name=file_name,
+                hard_filters=hard_filters,
+                jd_text=jd_text,
+                rubric_version=rubric_version,
+                classifier_result=classifier_result,
+                query_vector=query_vector,
+            )
+        except Exception as error:
+            warnings.append(f"rag_failed:{file_name}:{error}")
+            grounding_payload = {
+                "classifier": classifier_result,
+                "collection_keys": [],
+                "industry_hints": [],
+                "entry_note": "RAG unavailable; continue zero-shot.",
+                "few_shot_examples": "",
+                "exemplars": [],
+                "rag_status": "zero_shot",
+                "similarity_gate": settings.rag_similarity_threshold,
+                "embedding_model": settings.gemini_embedding_model,
+                "embedding_dimension": settings.gemini_embedding_dimension,
+                "vector_index_version": settings.vector_index_version,
+                "query_vector": query_vector,
+            }
+
+    return {
+        "file_name": file_name,
+        "normalized_payload": normalized_payload,
+        "routing_metadata": routing_metadata,
+        "grounding_payload": grounding_payload,
+        "analysis_text_bundle": build_analysis_text_bundle(normalized_payload),
+        "query_vector": query_vector,
+        "warnings": warnings,
+        "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+    }
+
+
 async def run_smart_cv_analysis(
     jd_text: str,
     weights: dict[str, Any],
@@ -346,6 +472,15 @@ async def run_smart_cv_analysis(
     current_user: AuthenticatedUser | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
+    rubric = resolve_scoring_rubric(
+        jd_text=jd_text,
+        hard_filters=hard_filters,
+        requested_weights=weights,
+        rubric_version=settings.rubric_version,
+    )
+    weights = rubric["weights"]
+    classifier_status = get_classifier_status()
+    classifier_version = str(classifier_status.get("model_version") or "unknown")
     started_at = time.perf_counter()
     pipeline: dict[str, Any] = {
         "cacheEnabled": current_user is not None,
@@ -355,10 +490,22 @@ async def run_smart_cv_analysis(
         "ragMode": {"fewShot": 0, "zeroShot": 0},
         "warnings": [],
         "model": {
+            "pipelineVersion": PIPELINE_VERSION,
+            "classifierVersion": classifier_version,
             "classifierThreshold": settings.local_classifier_confidence_threshold,
             "ragSimilarityThreshold": settings.rag_similarity_threshold,
             "rubricVersion": settings.rubric_version,
             "geminiCvAnalysisModel": settings.gemini_cv_analysis_model,
+            "embeddingModel": settings.gemini_embedding_model,
+            "embeddingDimension": settings.gemini_embedding_dimension,
+            "vectorIndexVersion": settings.vector_index_version,
+        },
+        "rubric": {
+            "version": rubric["rubricVersion"],
+            "roleKey": rubric["roleKey"],
+            "roleLabel": rubric["roleLabel"],
+            "source": rubric["source"],
+            "overrideDiff": rubric["overrideDiff"],
         },
     }
 
@@ -379,6 +526,10 @@ async def run_smart_cv_analysis(
             user=current_user,
             entry=entry,
             jd_text=jd_text,
+            weights=weights,
+            hard_filters=hard_filters,
+            rubric_version=settings.rubric_version,
+            classifier_version=classifier_version,
         )
         cache_plan_by_file[file_key] = {
             "cacheKey": cache_key,
@@ -411,56 +562,30 @@ async def run_smart_cv_analysis(
     if miss_entries:
         entry_contexts: dict[str, dict[str, Any]] = {}
         cv_text_map: dict[str, str] = {}
+        cv_vectors_by_file: dict[str, list[float]] = {}
+        semaphore = asyncio.Semaphore(settings.ai_preprocess_concurrency)
+        prepared_entries = await asyncio.gather(*[
+            _prepare_entry_context(
+                entry=entry,
+                jd_text=jd_text,
+                hard_filters=hard_filters,
+                rubric_version=settings.rubric_version,
+                semaphore=semaphore,
+            )
+            for entry in miss_entries
+        ])
+        pipeline["classifierCalls"] = len(miss_entries)
+        pipeline["embeddingCalls"] = len(miss_entries)
+        pipeline["preprocessConcurrency"] = settings.ai_preprocess_concurrency
 
-        for entry in miss_entries:
-            file_name = _entry_file_name(entry)
+        for prepared in prepared_entries:
+            file_name = str(prepared["file_name"])
             file_key = _normalize_file_name(file_name)
-            raw_text = str(entry.get("text") or "")
-
-            try:
-                normalized_payload = await normalize_cv_text_for_analysis_async(raw_text)
-            except Exception as error:
-                pipeline["warnings"].append(f"language_normalize_failed:{file_name}:{error}")
-                normalized_payload = {
-                    "original_text": raw_text,
-                    "analysis_text": raw_text,
-                    "translated_text": "",
-                    "normalized_vi_text": raw_text,
-                    "language": "unknown",
-                    "language_confidence": 0,
-                    "language_reason": "fallback",
-                    "was_translated": False,
-                }
-
-            try:
-                routing_metadata = await build_routing_metadata_async(jd_text, raw_text)
-            except Exception as error:
-                pipeline["warnings"].append(f"routing_metadata_failed:{file_name}:{error}")
-                routing_metadata = default_routing_metadata()
-
-            try:
-                grounding_payload = await build_approved_grounding_context(
-                    cv_text=raw_text,
-                    analysis_text=str(normalized_payload.get("analysis_text") or raw_text),
-                    file_name=file_name,
-                    hard_filters=hard_filters,
-                    jd_text=jd_text,
-                    rubric_version=settings.rubric_version,
-                )
-            except Exception as error:
-                pipeline["warnings"].append(f"rag_failed:{file_name}:{error}")
-                grounding_payload = {
-                    "classifier": None,
-                    "collection_keys": [],
-                    "industry_hints": [],
-                    "entry_note": "RAG unavailable; continue zero-shot.",
-                    "few_shot_examples": "",
-                    "exemplars": [],
-                    "rag_status": "zero_shot",
-                    "similarity_gate": settings.rag_similarity_threshold,
-                }
-
-            analysis_text_bundle = build_analysis_text_bundle(normalized_payload)
+            normalized_payload = prepared["normalized_payload"]
+            routing_metadata = prepared["routing_metadata"]
+            grounding_payload = prepared["grounding_payload"]
+            analysis_text_bundle = str(prepared["analysis_text_bundle"])
+            pipeline["warnings"].extend(prepared["warnings"])
             entry_note_parts = [
                 _format_routing_metadata_note(routing_metadata),
                 str(grounding_payload.get("entry_note") or ""),
@@ -471,6 +596,8 @@ async def run_smart_cv_analysis(
                 "few_shot_examples": grounding_payload.get("few_shot_examples") or "",
             }
             cv_text_map[file_name] = analysis_text_bundle
+            if isinstance(prepared.get("query_vector"), list):
+                cv_vectors_by_file[file_name] = prepared["query_vector"]
 
             rag_status = str(grounding_payload.get("rag_status") or "zero_shot")
             if rag_status == "few_shot":
@@ -493,7 +620,10 @@ async def run_smart_cv_analysis(
                 "groundingExampleCount": len(grounding_payload.get("exemplars") or []),
                 "ragSimilarityGate": grounding_payload.get("similarity_gate"),
                 "ragEmbeddingModel": grounding_payload.get("embedding_model"),
-                "detectedLocation": _infer_location_from_text(raw_text),
+                "ragEmbeddingDimension": grounding_payload.get("embedding_dimension"),
+                "vectorIndexVersion": grounding_payload.get("vector_index_version"),
+                "preprocessDurationMs": prepared["duration_ms"],
+                "detectedLocation": _infer_location_from_text(raw_text_by_file.get(file_key, "")),
             }
 
         try:
@@ -541,6 +671,7 @@ async def run_smart_cv_analysis(
                 jd_text,
                 hard_filters,
                 current_user.uid if current_user else None,
+                precomputed_cv_vectors=cv_vectors_by_file,
             )
         except Exception as error:
             pipeline["warnings"].append(f"candidate_enrichment_failed:{error}")
@@ -563,6 +694,7 @@ async def run_smart_cv_analysis(
             jd_hash = stable_hash(jd_text)
             weights_hash = stable_hash(weights)
             filters_hash = stable_hash(hard_filters)
+            cache_write_tasks: list[asyncio.Task[None]] = []
             for candidate in generated_candidates:
                 if str(candidate.get("status") or "SUCCESS").upper() == "FAILED":
                     continue
@@ -570,8 +702,7 @@ async def run_smart_cv_analysis(
                 plan = cache_plan_by_file.get(file_key)
                 if not plan:
                     continue
-                try:
-                    await sync_cache_entry_async(
+                cache_write_tasks.append(asyncio.create_task(sync_cache_entry_async(
                         current_user,
                         str(plan["cacheKey"]),
                         candidate,
@@ -579,11 +710,19 @@ async def run_smart_cv_analysis(
                         weights_hash,
                         filters_hash,
                         plan["fileInfo"],
-                    )
+                        rubric_version=settings.rubric_version,
+                        pipeline_version=PIPELINE_VERSION,
+                        maintain_views=False,
+                    )))
+            if cache_write_tasks:
+                cache_write_results = await asyncio.gather(*cache_write_tasks, return_exceptions=True)
+                for result in cache_write_results:
+                    if isinstance(result, Exception):
+                        pipeline["warnings"].append(f"cache_write_failed:{result}")
+                try:
+                    await maintain_user_cache_async(current_user)
                 except Exception as error:
-                    pipeline["warnings"].append(
-                        f"cache_write_failed:{candidate.get('fileName') or file_key}:{error}"
-                    )
+                    pipeline["warnings"].append(f"cache_maintenance_failed:{error}")
 
     candidates = [*cached_candidates, *generated_candidates]
     candidates = attach_advanced_score_breakdowns(candidates, cv_text_by_file_name, jd_text)

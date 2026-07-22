@@ -7,6 +7,7 @@ from typing import Any, Iterable
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from app.core.ai_contract import rank_from_score
 from app.core.config import get_settings
 from app.schemas.analysis import QuickCvScoreItem
 from app.services.gemini_service import generate_content
@@ -45,11 +46,7 @@ def _extract_json_array(raw_text: str) -> list[dict[str, Any]]:
 
 
 def _rank_from_score(score: int) -> str:
-    if score >= 80:
-        return "A"
-    if score >= 60:
-        return "B"
-    return "C"
+    return rank_from_score(score)
 
 
 def _normalize_item(item: dict[str, Any], file_name: str, extracted_text: str | None) -> QuickCvScoreItem:

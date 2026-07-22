@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import json
+import hashlib
 import re
 from pathlib import Path
 from threading import Lock
@@ -10,14 +11,18 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import joblib
+import sklearn
 
+from app.core.ai_contract import MODEL_ARTIFACT_SCHEMA_VERSION
 from app.core.config import get_settings
 
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "text_classifier_model.pkl"
+MANIFEST_PATH = MODEL_PATH.with_suffix(".manifest.json")
 
 _model_cache: Any | None = None
 _model_error: str | None = None
+_model_manifest: dict[str, Any] | None = None
 _model_lock = Lock()
 
 
@@ -29,8 +34,39 @@ def clean_text(text: str) -> str:
     return normalized.strip()
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_and_validate_manifest() -> dict[str, Any]:
+    if not MANIFEST_PATH.is_file():
+        raise FileNotFoundError(f"Classifier manifest was not found at: {MANIFEST_PATH}")
+    try:
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Classifier manifest is invalid: {error}") from error
+    if manifest.get("schemaVersion") != MODEL_ARTIFACT_SCHEMA_VERSION:
+        raise RuntimeError("Classifier manifest schema is unsupported.")
+    expected_hash = str(manifest.get("sha256") or "").strip().lower()
+    actual_hash = _sha256(MODEL_PATH)
+    if not expected_hash or actual_hash != expected_hash:
+        raise RuntimeError(
+            f"Classifier checksum mismatch: expected {expected_hash or 'missing'}, received {actual_hash}"
+        )
+    required_sklearn = str(manifest.get("frameworkVersion") or "").strip()
+    if required_sklearn and sklearn.__version__ != required_sklearn:
+        raise RuntimeError(
+            f"Classifier requires scikit-learn {required_sklearn}; runtime has {sklearn.__version__}"
+        )
+    return manifest
+
+
 def _load_model() -> Any:
-    global _model_cache, _model_error
+    global _model_cache, _model_error, _model_manifest
 
     if _model_cache is not None:
         return _model_cache
@@ -44,13 +80,23 @@ def _load_model() -> Any:
             raise FileNotFoundError(_model_error)
 
         try:
+            _model_manifest = _load_and_validate_manifest()
             _model_cache = joblib.load(MODEL_PATH)
+            expected_labels = [str(value) for value in (_model_manifest.get("labels") or [])]
+            actual_labels = [str(value) for value in getattr(_model_cache, "classes_", [])]
+            if expected_labels and actual_labels != expected_labels:
+                raise RuntimeError("Classifier labels do not match the artifact manifest.")
             _model_error = None
         except Exception as error:  # pragma: no cover - defensive path for runtime failures
             _model_error = f"Failed to load local classifier model: {error}"
             raise RuntimeError(_model_error) from error
 
     return _model_cache
+
+
+def warm_classifier() -> dict[str, Any]:
+    """Load and verify the local model once so server readiness is deterministic."""
+    return get_classifier_status()
 
 
 def _round_score(value: Any) -> float | None:
@@ -227,6 +273,7 @@ def classify_cv_text(cv_text: str, top_k: int = 3) -> dict[str, Any]:
         "confidence": confidence,
         "top_predictions": top_predictions,
         "model_source": str(MODEL_PATH),
+        "model_version": str((_model_manifest or {}).get("modelVersion") or "unknown"),
     }
 
 
@@ -255,6 +302,8 @@ def get_classifier_status() -> dict[str, Any]:
             return {
                 "ready": True,
                 "model_source": str(MODEL_PATH),
+                "model_version": str((_model_manifest or {}).get("modelVersion") or "unknown"),
+                "artifact_sha256": str((_model_manifest or {}).get("sha256") or ""),
                 "label_count": len(classes),
                 "labels": classes,
                 "error": None,
@@ -263,6 +312,8 @@ def get_classifier_status() -> dict[str, Any]:
             return {
                 "ready": False,
                 "model_source": str(MODEL_PATH),
+                "model_version": str((_model_manifest or {}).get("modelVersion") or "unknown"),
+                "artifact_sha256": str((_model_manifest or {}).get("sha256") or ""),
                 "label_count": 0,
                 "labels": [],
                 "error": str(error),
@@ -271,6 +322,8 @@ def get_classifier_status() -> dict[str, Any]:
     return {
         "ready": False,
         "model_source": str(MODEL_PATH),
+        "model_version": "unknown",
+        "artifact_sha256": "",
         "label_count": 0,
         "labels": [],
         "error": _model_error or f"Local classifier model was not found at: {MODEL_PATH}",

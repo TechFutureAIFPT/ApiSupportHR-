@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "supporthr-classifier-manifest-v1",
+  "modelVersion": "cv-industry-24-v1",
+  "artifact": "text_classifier_model.pkl",
+  "sha256": "874ac75f8696c4857e438af5e321160594c460e606118a5e9f830b1764afd439",
+  "framework": "scikit-learn",
+  "frameworkVersion": "1.6.1",
+  "pythonVersion": "3.11",
+  "labelCount": 24,
+  "labels": [
+    "ACCOUNTANT", "ADVOCATE", "AGRICULTURE", "APPAREL", "ARTS", "AUTOMOBILE",
+    "AVIATION", "BANKING", "BPO", "BUSINESS-DEVELOPMENT", "CHEF", "CONSTRUCTION",
+    "CONSULTANT", "DESIGNER", "DIGITAL-MEDIA", "ENGINEERING", "FINANCE", "FITNESS",
+    "HEALTHCARE", "HR", "INFORMATION-TECHNOLOGY", "PUBLIC-RELATIONS", "SALES", "TEACHER"
+  ]
+}

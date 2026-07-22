@@ -13,6 +13,20 @@ services:
         value: 3.11.11
       - key: APP_NAME
         value: SupportHR Backend
+      - key: AUTH_PROVIDER
+        value: firebase
+      - key: DATA_PROVIDER
+        value: firestore
+      - key: MAINTENANCE_MODE
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_AUDIENCE
+        value: authenticated
+      - key: DATABASE_URL
+        sync: false
+      - key: DATA_ENCRYPTION_KEY
+        sync: false
       - key: FRONTEND_ORIGIN
         sync: false
       - key: GOOGLE_DRIVE_ALLOWED_ORIGINS
@@ -38,7 +52,9 @@ services:
       - key: MOBILE_JD_GEMINI_API_KEY
         sync: false
       - key: GEMINI_EMBEDDING_MODEL
-        value: gemini-embedding-001
+        value: gemini-embedding-2
+      - key: GEMINI_EMBEDDING_DIMENSION
+        value: "768"
       - key: GEMINI_API_KEY_1
         sync: false
       - key: GEMINI_API_KEY_2
@@ -100,7 +116,9 @@ services:
       - key: APPROVED_EXEMPLARS_COLLECTION
         value: approvedExemplars
       - key: RUBRIC_VERSION
-        value: v1
+        value: v2
+      - key: VECTOR_INDEX_VERSION
+        value: gemini-embedding-2-768-v1
       - key: LOCAL_CLASSIFIER_MODE
         value: local
       - key: LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL

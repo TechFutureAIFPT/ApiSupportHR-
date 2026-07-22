@@ -7,7 +7,9 @@ import re
 import unicodedata
 from typing import Any
 
+from app.core.ai_contract import EXEMPLAR_SCHEMA_VERSION, is_current_vector_contract
 from app.repositories.firestore import account_repository as repo
+from app.repositories.firestore import vector_repository as vector_repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.history_service import fetch_recent_history
 from app.services.gemini_service import embed_text
@@ -83,7 +85,6 @@ MIN_EXEMPLAR_SIMILARITY = 0.72
 MAX_HISTORY_LOOKBACK = 50
 MAX_EXEMPLARS = 2
 MAX_TOP_PREDICTIONS = 3
-APPROVED_EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 def _normalize_file_name(value: str) -> str:
@@ -447,7 +448,7 @@ def _normalize_lookup(value: str) -> str:
 
 
 def _as_vector(value: Any) -> list[float] | None:
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, (list, tuple)) or not value:
         return None
     vector: list[float] = []
     for item in value:
@@ -515,13 +516,23 @@ def _approved_collection_ref():
 
 
 def _fetch_approved_records(rubric_version: str) -> list[dict[str, Any]]:
+    from google.cloud.firestore_v1.base_query import FieldFilter
+
+    settings = get_settings()
     collection_ref = _approved_collection_ref()
     try:
-        docs = list(collection_ref.where("rubricVersion", "==", rubric_version).stream())
-        if not docs:
-            docs = list(collection_ref.stream())
+        docs = list(
+            collection_ref
+            .where(filter=FieldFilter("status", "==", "approved"))
+            .where(filter=FieldFilter("approved", "==", True))
+            .where(filter=FieldFilter("rubricVersion", "==", rubric_version))
+            .where(filter=FieldFilter("vectorIndexVersion", "==", settings.vector_index_version))
+            .limit(settings.rag_candidate_limit)
+            .stream()
+        )
     except Exception:
-        docs = list(collection_ref.stream())
+        # Bounded compatibility path; records still pass strict local contract checks.
+        docs = list(collection_ref.limit(settings.rag_candidate_limit).stream())
 
     records: list[dict[str, Any]] = []
     for doc in docs:
@@ -533,10 +544,8 @@ def _fetch_approved_records(rubric_version: str) -> list[dict[str, Any]]:
 
 def _is_approved(record: dict[str, Any]) -> bool:
     explicit = record.get("approved")
-    if explicit is False:
-        return False
-    status = _normalize_lookup(str(record.get("status") or record.get("state") or "approved"))
-    return status in {"approved", "published", "active", ""}
+    status = _normalize_lookup(str(record.get("status") or record.get("state") or ""))
+    return explicit is True and status == "approved"
 
 
 def _record_vector(record: dict[str, Any]) -> list[float] | None:
@@ -638,16 +647,23 @@ def _job_title_matches(record: dict[str, Any], target_title: str) -> bool:
 
 def _rubric_matches(record: dict[str, Any], rubric_version: str) -> bool:
     record_version = str(_first_record_value(record, "rubricVersion", "rubric.version", "metadata.rubricVersion") or "")
-    return not record_version or record_version == rubric_version
+    return record_version == rubric_version
+
+
+def _schema_matches(record: dict[str, Any]) -> bool:
+    schema_version = str(
+        _first_record_value(record, "schemaVersion", "schema_version", "metadata.schemaVersion") or ""
+    )
+    return schema_version == EXEMPLAR_SCHEMA_VERSION
 
 
 def _format_approved_example(index: int, exemplar: dict[str, Any]) -> str:
     analysis_json = (
-        _first_record_value(exemplar, "analysisJson", "analysis", "analysisData", "historicalAnalysis")
+        _first_record_value(exemplar, "analysisJson", "analysis_json", "analysis", "analysisData", "historicalAnalysis")
         or {}
     )
     redacted_text = (
-        _first_record_value(exemplar, "redactedCvText", "cvTextRedacted", "redacted_text", "textSnippet")
+        _first_record_value(exemplar, "redactedCvText", "redacted_cv_text", "cvTextRedacted", "redacted_text", "textSnippet")
         or ""
     )
     lines = [
@@ -674,11 +690,57 @@ def _find_approved_exemplars(
     max_items: int,
     similarity_threshold: float,
 ) -> list[dict[str, Any]]:
+    settings = get_settings()
+    try:
+        retrieval_limit = min(
+            int(settings.rag_candidate_limit),
+            max(max_items * 10, max_items),
+        )
+        native_records = vector_repo.find_nearest_approved_exemplars(
+            collection_name=settings.approved_exemplars_collection,
+            query_vector=query_vector,
+            rubric_version=rubric_version,
+            vector_index_version=settings.vector_index_version,
+            limit=retrieval_limit,
+            similarity_threshold=similarity_threshold,
+        )
+        return [
+            record for record in native_records
+            if _is_approved(record)
+            and _schema_matches(record)
+            and _rubric_matches(record, rubric_version)
+            and is_current_vector_contract(
+                model=_first_record_value(record, "embeddingModel", "embedding_model"),
+                dimension=_first_record_value(record, "embeddingDimension", "embedding_dimension"),
+                index_version=_first_record_value(record, "vectorIndexVersion", "vector_index_version"),
+                expected_model=settings.gemini_embedding_model,
+                expected_dimension=settings.gemini_embedding_dimension,
+                expected_index_version=settings.vector_index_version,
+            )
+            and _industry_matches(record, industry_hints)
+            and _seniority_matches(record, target_seniority)
+            and _job_title_matches(record, target_job_title)
+        ][:max_items]
+    except Exception:
+        # Keep a bounded fallback for local tests and the index creation window.
+        pass
+
     scored: list[dict[str, Any]] = []
     for record in _fetch_approved_records(rubric_version):
         if not _is_approved(record):
             continue
+        if not _schema_matches(record):
+            continue
         if not _rubric_matches(record, rubric_version):
+            continue
+        if not is_current_vector_contract(
+            model=_first_record_value(record, "embeddingModel", "embedding_model"),
+            dimension=_first_record_value(record, "embeddingDimension", "embedding_dimension"),
+            index_version=_first_record_value(record, "vectorIndexVersion", "vector_index_version"),
+            expected_model=settings.gemini_embedding_model,
+            expected_dimension=settings.gemini_embedding_dimension,
+            expected_index_version=settings.vector_index_version,
+        ):
             continue
         if not _industry_matches(record, industry_hints):
             continue
@@ -705,19 +767,21 @@ async def build_approved_grounding_context(
     hard_filters: dict[str, Any],
     jd_text: str,
     rubric_version: str | None = None,
+    classifier_result: dict[str, Any] | None = None,
+    query_vector: list[float] | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
-    classifier_result: dict[str, Any] | None = None
-    try:
-        classifier_result = await asyncio.to_thread(classify_cv_text, cv_text or analysis_text, MAX_TOP_PREDICTIONS)
-    except Exception as error:
-        classifier_result = {
-            "predicted_label": "",
-            "confidence": None,
-            "top_predictions": [],
-            "model_source": "",
-            "error": str(error),
-        }
+    if classifier_result is None:
+        try:
+            classifier_result = await asyncio.to_thread(classify_cv_text, cv_text or analysis_text, MAX_TOP_PREDICTIONS)
+        except Exception as error:
+            classifier_result = {
+                "predicted_label": "",
+                "confidence": None,
+                "top_predictions": [],
+                "model_source": "",
+                "error": str(error),
+            }
 
     top_predictions = list((classifier_result or {}).get("top_predictions") or [])
     industry_hints, collection_keys = _build_industry_hints(
@@ -727,11 +791,15 @@ async def build_approved_grounding_context(
     )
 
     cleaned_analysis_text = _normalize_text(analysis_text or cv_text)[:6000]
-    query_vector: list[float] | None = None
     embedding_error = ""
-    if cleaned_analysis_text:
+    if query_vector is None and cleaned_analysis_text:
         try:
-            query_vector = await asyncio.to_thread(embed_text, cleaned_analysis_text, APPROVED_EMBEDDING_MODEL)
+            query_vector = await asyncio.to_thread(
+                embed_text,
+                cleaned_analysis_text,
+                settings.gemini_embedding_model,
+                task="semantic_similarity",
+            )
         except Exception as error:
             embedding_error = str(error)
 
@@ -801,7 +869,10 @@ async def build_approved_grounding_context(
         "exemplars": exemplars,
         "rag_status": "few_shot" if exemplars else "zero_shot",
         "similarity_gate": float(settings.rag_similarity_threshold),
-        "embedding_model": APPROVED_EMBEDDING_MODEL,
+        "embedding_model": settings.gemini_embedding_model,
+        "embedding_dimension": settings.gemini_embedding_dimension,
+        "vector_index_version": settings.vector_index_version,
+        "query_vector": query_vector,
         "embedding_error": embedding_error,
         "retrieval_error": retrieval_error,
     }

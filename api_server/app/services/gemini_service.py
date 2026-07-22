@@ -9,11 +9,7 @@ try:
 except ImportError:  # pragma: no cover - optional in isolated test envs
     genai = None  # type: ignore[assignment]
 
-try:
-    import google.generativeai as genai_legacy
-except ImportError:  # pragma: no cover - optional in isolated test envs
-    genai_legacy = None  # type: ignore[assignment]
-
+from app.core.ai_contract import embedding_prompt
 from app.core.config import get_settings
 
 
@@ -82,19 +78,11 @@ def _supports_thinking_config(model_name: str) -> bool:
 
 def _fallback_models(model: str) -> Iterable[str]:
     seen: set[str] = set()
-    for candidate in (model, "gemini-2.5-flash", "gemini-2.0-flash"):
+    for candidate in (model, "gemini-3.5-flash", "gemini-2.5-flash"):
         normalized = (candidate or "").strip()
         if normalized and normalized not in seen:
             seen.add(normalized)
             yield normalized
-
-
-def _fallback_embedding_models(model: str) -> Iterable[str]:
-    yield model
-    if model in {"text-embedding-004", "models/text-embedding-004"}:
-        yield "gemini-embedding-001"
-    if model != "gemini-embedding-001":
-        yield "gemini-embedding-001"
 
 
 def generate_content(
@@ -134,33 +122,53 @@ def generate_content(
     raise HTTPException(status_code=500, detail=str(last_error or "All Gemini keys and models failed on backend"))
 
 
-def embed_text(text: str, model: str | None = None) -> List[float]:
-    if genai_legacy is None:
-        raise HTTPException(status_code=500, detail="Google Generative AI SDK is not installed on server")
+def _embedding_values(response: Any) -> List[float]:
+    embeddings = getattr(response, "embeddings", None) or []
+    if embeddings:
+        values = getattr(embeddings[0], "values", None) or []
+        return [float(value) for value in values]
+    embedding = getattr(response, "embedding", None)
+    values = getattr(embedding, "values", None) if embedding is not None else None
+    return [float(value) for value in (values or [])]
+
+
+def embed_text(
+    text: str,
+    model: str | None = None,
+    *,
+    task: str = "semantic_similarity",
+    title: str = "none",
+    output_dimensionality: int | None = None,
+) -> List[float]:
+    if genai is None:
+        raise HTTPException(status_code=500, detail="Google GenAI SDK is not installed on server")
 
     settings = get_settings()
     target_model = model or settings.gemini_embedding_model
+    target_dimension = output_dimensionality or settings.gemini_embedding_dimension
+    prepared_text = embedding_prompt(text, task=task, title=title)
     keys = _get_keys()
     last_error: Exception | None = None
 
-    for target_embedding_model in _fallback_embedding_models(target_model):
-        for index, key in enumerate(keys, start=1):
-            try:
-                genai_legacy.configure(api_key=key)
-                result = genai_legacy.embed_content(
-                    model=target_embedding_model,
-                    content=text,
-                    task_type="semantic_similarity",
+    for index, key in enumerate(keys, start=1):
+        try:
+            client = genai.Client(api_key=key)
+            response = client.models.embed_content(
+                model=target_model,
+                contents=prepared_text,
+                config={"output_dimensionality": target_dimension},
+            )
+            vector = _embedding_values(response)
+            if len(vector) != target_dimension:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {target_dimension}, received {len(vector)}"
                 )
-                vector = result.get("embedding", [])
-                if not vector:
-                    raise ValueError("Embedding API returned an empty vector")
-                return [float(value) for value in vector]
-            except Exception as error:  # pragma: no cover - network/provider path
-                last_error = error
-                if _is_invalid_key_error(error):
-                    print(f"[Gemini Embed] Key {index}/{len(keys)} invalid or revoked.")
-                else:
-                    print(f"[Gemini Embed] Model {target_embedding_model} with key {index} failed: {error}")
+            return vector
+        except Exception as error:  # pragma: no cover - network/provider path
+            last_error = error
+            if _is_invalid_key_error(error):
+                print(f"[Gemini Embed] Key {index}/{len(keys)} invalid or revoked.")
+            else:
+                print(f"[Gemini Embed] Model {target_model} with key {index} failed: {error}")
 
     raise HTTPException(status_code=500, detail=str(last_error or "All Gemini embedding keys failed on backend"))

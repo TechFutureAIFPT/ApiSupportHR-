@@ -7,6 +7,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional in isolated test envs
     firestore = None  # type: ignore[assignment]
 
+from app.core.config import get_settings
 from app.integrations.firebase_admin import get_firestore_client
 
 
@@ -33,10 +34,18 @@ USER_SYNC_STATE_COLLECTION = "userSyncState"
 
 
 def db():
+    if get_settings().data_provider == "supabase":
+        from app.repositories.postgres.document_store import PostgresDocumentDatabase
+
+        return PostgresDocumentDatabase()
     return get_firestore_client()
 
 
 def server_timestamp():
+    if get_settings().data_provider == "supabase":
+        from datetime import datetime, timezone
+
+        return datetime.now(timezone.utc)
     if firestore is None:
         raise RuntimeError("Firebase Admin SDK chua duoc cai dat trong moi truong hien tai.")
     return firestore.SERVER_TIMESTAMP

@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.core.ai_contract import PIPELINE_VERSION
 from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account import view_sync_service
@@ -24,10 +25,30 @@ def stable_hash(value: Any) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def build_cv_jd_cache_key(cv_id: str, jd_text: str) -> str:
-    normalized_cv_id = str(cv_id or "").strip()
-    normalized_jd = str(jd_text or "").strip()
-    return stable_hash(f"{normalized_cv_id}::{normalized_jd}")
+def build_cv_jd_cache_key(
+    cv_id: str,
+    jd_text: str,
+    *,
+    cv_text: str = "",
+    weights: dict[str, Any] | None = None,
+    hard_filters: dict[str, Any] | None = None,
+    rubric_version: str = "",
+    prompt_version: str = "cv_analysis/analyze_entries:v8",
+    classifier_version: str = "",
+    pipeline_version: str = PIPELINE_VERSION,
+) -> str:
+    payload = {
+        "cvId": str(cv_id or "").strip(),
+        "cvTextHash": stable_hash(cv_text),
+        "jdHash": stable_hash(jd_text),
+        "weightsHash": stable_hash(weights or {}),
+        "filtersHash": stable_hash(hard_filters or {}),
+        "rubricVersion": rubric_version,
+        "promptVersion": prompt_version,
+        "classifierVersion": classifier_version,
+        "pipelineVersion": pipeline_version,
+    }
+    return stable_hash(payload)
 
 
 def sync_cache_entry(
@@ -38,6 +59,10 @@ def sync_cache_entry(
     weights_hash: str,
     filters_hash: str,
     file_info: dict[str, Any],
+    *,
+    rubric_version: str = "",
+    pipeline_version: str = PIPELINE_VERSION,
+    maintain_views: bool = True,
 ) -> None:
     expires_at = datetime.now(timezone.utc) + timedelta(days=CACHE_EXPIRY_DAYS)
     doc_id = f"{user.uid}_{cache_key}"
@@ -53,6 +78,8 @@ def sync_cache_entry(
             "jdHash": jd_hash,
             "weightsHash": weights_hash,
             "filtersHash": filters_hash,
+            "rubricVersion": rubric_version,
+            "pipelineVersion": pipeline_version,
             "fileInfo": {
                 "name": str(file_info.get("name") or ""),
                 "size": int(file_info.get("size") or 0),
@@ -62,8 +89,9 @@ def sync_cache_entry(
             "lastValidatedAt": repo.server_timestamp(),
         }
     )
-    cleanup_user_cache(user, MAX_CACHE_ENTRIES_PER_USER)
-    view_sync_service.refresh_user_views(user, "cache", rebuild_mobile_inbox=False)
+    if maintain_views:
+        cleanup_user_cache(user, MAX_CACHE_ENTRIES_PER_USER)
+        view_sync_service.refresh_user_views(user, "cache", rebuild_mobile_inbox=False)
 
 
 def get_cache_entry(user: AuthenticatedUser, cache_key: str) -> dict[str, Any] | None:
@@ -92,6 +120,10 @@ async def sync_cache_entry_async(
     weights_hash: str,
     filters_hash: str,
     file_info: dict[str, Any],
+    *,
+    rubric_version: str = "",
+    pipeline_version: str = PIPELINE_VERSION,
+    maintain_views: bool = True,
 ) -> None:
     await asyncio.to_thread(
         sync_cache_entry,
@@ -102,7 +134,18 @@ async def sync_cache_entry_async(
         weights_hash,
         filters_hash,
         file_info,
+        rubric_version=rubric_version,
+        pipeline_version=pipeline_version,
+        maintain_views=maintain_views,
     )
+
+
+async def maintain_user_cache_async(user: AuthenticatedUser) -> None:
+    def _maintain() -> None:
+        cleanup_user_cache(user, MAX_CACHE_ENTRIES_PER_USER)
+        view_sync_service.refresh_user_views(user, "cache", rebuild_mobile_inbox=False)
+
+    await asyncio.to_thread(_maintain)
 
 
 def get_all_user_cache(user: AuthenticatedUser) -> dict[str, Any]:

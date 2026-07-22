@@ -1,6 +1,6 @@
 ## Backend
 
-FastAPI backend for CV analysis, recruiter workflow automation, Google Drive import, Firestore persistence, and feedback/evaluation loops.
+FastAPI backend for CV analysis, recruiter workflow automation, Google Drive import, and feedback/evaluation loops. The data/auth layer supports Firebase/Firestore before cutover and Supabase Auth/PostgreSQL afterward.
 
 ### Project documentation
 
@@ -18,13 +18,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### Run with Docker
 
-Docker is an optional local runtime. It does not replace the current Render Python deployment unless `render.yaml` is changed later.
+Docker Compose runs the API, Redis and a separate analysis worker. Render remains compatible through
+`ANALYSIS_JOB_MODE=in_process`; the horizontally scaled path uses `ANALYSIS_JOB_MODE=redis`.
 
 From the backend repo root (`Software/Web/BE`):
 
 ```bash
 docker compose build
 docker compose up
+docker compose up --scale worker=3
 ```
 
 Check the API:
@@ -33,10 +35,11 @@ Check the API:
 curl http://localhost:8000/health
 ```
 
-Expected response:
+Expected response includes classifier and queue readiness. Liveness and readiness are also available at:
 
-```json
-{"status":"ok"}
+```text
+GET /health/live
+GET /health/ready
 ```
 
 Docker reads local secrets from `api_server/.env` through `docker-compose.yml`; `.env` is excluded from the image by `.dockerignore`.
@@ -55,6 +58,11 @@ When testing the mobile app against this Docker backend:
 - Required minimum for backend startup:
   - `FIREBASE_SERVICE_ACCOUNT_JSON` or `FIREBASE_PROJECT_ID` + `FIREBASE_CLIENT_EMAIL` + `FIREBASE_PRIVATE_KEY`
   - `GEMINI_API_KEY_1`
+  - packaged `app/models/text_classifier_model.pkl` and matching `.manifest.json`
+- Supabase cutover mode additionally requires:
+  - `AUTH_PROVIDER=supabase` and `DATA_PROVIDER=supabase`
+  - `SUPABASE_URL` and pooled `DATABASE_URL`
+  - base64 32-byte `DATA_ENCRYPTION_KEY`
 - Required for Google Drive import:
   - `GOOGLE_OAUTH_CLIENT_ID`
   - `GOOGLE_OAUTH_CLIENT_SECRET`
@@ -64,6 +72,16 @@ When testing the mobile app against this Docker backend:
   - `LOCAL_CLASSIFIER_MODE=remote` or `auto`
   - `LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL`
   - `LOCAL_CLASSIFIER_REMOTE_STATUS_URL` (optional if the remote service also exposes `/api/cv/classifier-status`)
+
+AI/RAG production contract:
+
+- `GEMINI_EMBEDDING_MODEL=gemini-embedding-2`
+- `GEMINI_EMBEDDING_DIMENSION=768`
+- `VECTOR_INDEX_VERSION=gemini-embedding-2-768-v1`
+- `RUBRIC_VERSION=v2`
+- `VECTOR_STORE_PROVIDER=firestore` before cutover; the repository routes this contract to PostgreSQL when `DATA_PROVIDER=supabase`.
+
+Migration commands and safety gates are documented in `scripts/README-supabase-migration.md`.
 
 ### Project structure
 
@@ -128,10 +146,13 @@ Feedback loop:
 Async CV analysis:
 - `POST /api/cv/analyze-core-async` returns `202 Accepted` with `job_id`.
 - `POST /api/analysis/jobs` is the queue-oriented alias for creating the same analysis job.
-- `GET /api/analysis/status/{job_id}` returns `processing`, `completed`, or `failed` for frontend polling.
+- `GET /api/analysis/status/{job_id}` returns `queued`, `processing`, `completed`, or `failed` for frontend polling.
 - Completed jobs include the normal `{ candidates, pipeline }` payload and are persisted to Firestore history when the request has a valid Firebase user.
 
 ### Deploy
+
+Kubernetes manifests and operating notes are under `../deploy/kubernetes`. The production overlay requires
+an immutable image tag, a real `supporthr-backend-secrets` Secret, managed Redis, Metrics Server and cluster-specific ingress/TLS.
 
 - Python version is pinned in `.python-version`
 - Start command:
@@ -142,3 +163,4 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
 - You can deploy directly from `render.yaml` or mirror the same settings in Render UI.
 - The self-trained CV classifier can stay local inside this API, or be deployed as a separate HTTP service and wired back through `LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL`.
+- Canonical offline training and exemplar ingestion live in `../ml_pipeline`; raw data and generated artifacts are not copied into the server image.

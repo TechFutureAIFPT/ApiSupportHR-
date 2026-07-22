@@ -87,6 +87,9 @@ class VectorStoreServiceTests(unittest.TestCase):
                                 "role": "Backend Engineer",
                                 "relativePath": "samples/backend-1.md",
                                 "metadata": {"level": "senior"},
+                                "embeddingModel": "gemini-embedding-2",
+                                "embeddingDimension": 768,
+                                "vectorIndexVersion": "gemini-embedding-2-768-v1",
                                 "vector": [1.0, 0.0],
                             },
                             {
@@ -95,6 +98,9 @@ class VectorStoreServiceTests(unittest.TestCase):
                                 "role": "Frontend Engineer",
                                 "relativePath": "samples/frontend-1.md",
                                 "metadata": {"level": "mid"},
+                                "embeddingModel": "gemini-embedding-2",
+                                "embeddingDimension": 768,
+                                "vectorIndexVersion": "gemini-embedding-2-768-v1",
                                 "vector": [0.7, 0.3],
                             },
                         ]
@@ -210,6 +216,9 @@ class VectorStoreServiceTests(unittest.TestCase):
             "name": "Candidate One",
             "role": "Backend Engineer",
             "metadata": {"ownerUid": "user-123", "fileType": "cv"},
+            "embeddingModel": "gemini-embedding-2",
+            "embeddingDimension": 768,
+            "vectorIndexVersion": "gemini-embedding-2-768-v1",
             "vector": [1.0, 0.0],
         }
         fake_vectors.store["uploaded-file-2"] = {
@@ -218,6 +227,9 @@ class VectorStoreServiceTests(unittest.TestCase):
             "name": "Candidate Two",
             "role": "Frontend Engineer",
             "metadata": {"ownerUid": "user-999", "fileType": "cv"},
+            "embeddingModel": "gemini-embedding-2",
+            "embeddingDimension": 768,
+            "vectorIndexVersion": "gemini-embedding-2-768-v1",
             "vector": [1.0, 0.0],
         }
 
@@ -248,6 +260,9 @@ class VectorStoreServiceTests(unittest.TestCase):
             "name": "Current Candidate",
             "role": "Backend Engineer",
             "metadata": {"ownerUid": "user-123", "fileType": "cv", "fileName": "same-file.pdf"},
+            "embeddingModel": "gemini-embedding-2",
+            "embeddingDimension": 768,
+            "vectorIndexVersion": "gemini-embedding-2-768-v1",
             "vector": [1.0, 0.0],
         }
         fake_vectors.store["uploaded-file-2"] = {
@@ -256,6 +271,9 @@ class VectorStoreServiceTests(unittest.TestCase):
             "name": "Reference Candidate",
             "role": "Platform Engineer",
             "metadata": {"ownerUid": "user-123", "fileType": "cv", "fileName": "other-file.pdf"},
+            "embeddingModel": "gemini-embedding-2",
+            "embeddingDimension": 768,
+            "vectorIndexVersion": "gemini-embedding-2-768-v1",
             "vector": [0.95, 0.05],
         }
 

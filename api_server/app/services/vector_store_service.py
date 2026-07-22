@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from app.core.ai_contract import is_current_vector_contract
 from app.core.config import get_settings
 from app.repositories.firestore import vector_repository as repo
 from app.services.gemini_service import embed_text
@@ -56,14 +57,30 @@ def similarity_to_bonus(avg: float) -> float:
 
 
 def _normalize_record(raw: dict[str, Any], fallback_id: str) -> dict[str, Any]:
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
     return {
         "id": str(raw.get("id") or fallback_id),
         "name": str(raw.get("name") or ""),
         "role": str(raw.get("role") or ""),
         "relativePath": str(raw.get("relativePath") or ""),
-        "metadata": raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {},
+        "metadata": metadata,
         "vector": _as_float_vector(raw.get("vector")),
+        "embeddingModel": raw.get("embeddingModel") or raw.get("vectorModel") or metadata.get("embeddingModel"),
+        "embeddingDimension": raw.get("embeddingDimension") or metadata.get("embeddingDimension"),
+        "vectorIndexVersion": raw.get("vectorIndexVersion") or metadata.get("vectorIndexVersion"),
     }
+
+
+def _matches_vector_contract(record: dict[str, Any]) -> bool:
+    settings = get_settings()
+    return is_current_vector_contract(
+        model=record.get("embeddingModel"),
+        dimension=record.get("embeddingDimension"),
+        index_version=record.get("vectorIndexVersion"),
+        expected_model=settings.gemini_embedding_model,
+        expected_dimension=settings.gemini_embedding_dimension,
+        expected_index_version=settings.vector_index_version,
+    )
 
 
 def _legacy_json_dir() -> Path:
@@ -96,7 +113,7 @@ def _load_json_records(collection_key: str, configured_dir: str) -> list[dict[st
             for index, record in enumerate(records)
             if isinstance(record, dict)
         ]
-        return [record for record in normalized if record["vector"]]
+        return [record for record in normalized if record["vector"] and _matches_vector_contract(record)]
     return []
 
 
@@ -128,7 +145,7 @@ def _load_firestore_records(
         if source_file_type and source_file_type != "cv":
             continue
         normalized = _normalize_record(data, fallback_id=snapshot.id)
-        if normalized["vector"]:
+        if normalized["vector"] and _matches_vector_contract(normalized):
             records.append(normalized)
     return records
 

@@ -11,6 +11,12 @@ Nó là pipeline hai tầng:
 
 Kết quả cuối cùng là sự kết hợp của cả hai tầng này.
 
+## Rubric v2 trước khi scoring
+
+`rubric_service.py` chọn một trong 8 template role, mỗi template có tổng 100 điểm. Nếu recruiter gửi weights,
+backend xem đó là full override, validate tổng 100 và ghi `overrideDiff` vào pipeline metadata. Quick score
+và full score dùng chung mốc hạng A >= 75, B >= 50, C < 50.
+
 ## Tầng 1: AI core analysis
 
 Service chính:

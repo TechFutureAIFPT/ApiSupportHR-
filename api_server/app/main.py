@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +11,8 @@ from starlette.responses import JSONResponse, Response
 
 from app.api.routes import account_router, ai_router, files_router, mobile_jd_router, salary_router
 from app.core.config import get_settings
+from app.integrations import redis_cache
+from app.services.local_classifier_service import get_classifier_status, warm_classifier
 from app.services.security_service import apply_request_rate_limits, log_audit_event, resolve_client_ip
 from app.utils.text_normalization import normalize_payload_text
 
@@ -38,7 +41,21 @@ def _build_allowed_origins() -> list[str]:
     return sorted(origins)
 
 
-api_app = FastAPI(title=settings.app_name)
+def verify_runtime_artifacts() -> None:
+    if settings.local_classifier_mode != "local":
+        return
+    status = warm_classifier()
+    if settings.require_classifier_ready and not bool(status.get("ready")):
+        raise RuntimeError(f"Local classifier failed readiness validation: {status.get('error')}")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    verify_runtime_artifacts()
+    yield
+
+
+api_app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 
 @api_app.middleware("http")
@@ -48,6 +65,8 @@ async def audit_and_guard_requests(request: Request, call_next):
     request.state.cache_status = getattr(request.state, "cache_status", "bypass")
 
     try:
+        if settings.maintenance_mode and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+            raise HTTPException(status_code=503, detail="SupportHR is temporarily read-only for data migration.")
         apply_request_rate_limits(request)
         response = await call_next(request)
     except HTTPException as error:
@@ -121,9 +140,54 @@ api_app.include_router(mobile_jd_router)
 api_app.include_router(salary_router)
 
 
-@api_app.get("/health")
-def health() -> dict[str, str]:
+def _readiness_payload() -> dict[str, object]:
+    classifier = get_classifier_status()
+    classifier_ready = bool(classifier.get("ready")) or settings.local_classifier_mode == "auto"
+    if settings.require_classifier_ready and settings.local_classifier_mode == "local" and not classifier_ready:
+        raise HTTPException(status_code=503, detail="Local classifier is not ready")
+    redis_required = settings.analysis_job_mode == "redis"
+    redis_ready = redis_cache.ping() if redis_required else None
+    if redis_required and not redis_ready:
+        raise HTTPException(status_code=503, detail="Redis analysis queue is not ready")
+    postgres_required = settings.data_provider == "supabase"
+    postgres_is_ready = None
+    if postgres_required:
+        from app.integrations.postgres import postgres_ready
+
+        postgres_is_ready = postgres_ready()
+        if not postgres_is_ready:
+            raise HTTPException(status_code=503, detail="Supabase PostgreSQL is not ready")
+    return {
+        "status": "ok",
+        "classifier": {
+            "ready": bool(classifier.get("ready")),
+            "modelVersion": classifier.get("model_version"),
+            "labelCount": classifier.get("label_count"),
+        },
+        "queue": {
+            "mode": settings.analysis_job_mode,
+            "redisReady": redis_ready,
+        },
+        "data": {
+            "provider": settings.data_provider,
+            "postgresReady": postgres_is_ready,
+        },
+    }
+
+
+@api_app.get("/health/live")
+def health_live() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@api_app.get("/health/ready")
+def health_ready() -> dict[str, object]:
+    return _readiness_payload()
+
+
+@api_app.get("/health")
+def health() -> dict[str, object]:
+    return _readiness_payload()
 
 
 app = CORSMiddleware(
@@ -132,6 +196,7 @@ app = CORSMiddleware(
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}):(8081|8090|19006)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Firebase-AppCheck", "If-None-Match"],
+    allow_headers=["Authorization", "Content-Type", "If-None-Match"]
+    + (["X-Firebase-AppCheck"] if settings.auth_provider == "firebase" else []),
     expose_headers=["ETag", "X-Data-Revision"],
 )

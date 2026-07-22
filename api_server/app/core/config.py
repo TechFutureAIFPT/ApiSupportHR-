@@ -7,6 +7,13 @@ from typing import List
 
 from dotenv import load_dotenv
 
+from app.core.ai_contract import (
+    DEFAULT_EMBEDDING_DIMENSION,
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_RUBRIC_VERSION,
+    DEFAULT_VECTOR_INDEX_VERSION,
+)
+
 
 load_dotenv()
 
@@ -27,6 +34,30 @@ class Settings:
                 return default
 
         self.app_name = os.getenv("APP_NAME", "SupportHR Backend")
+        self.maintenance_mode = os.getenv("MAINTENANCE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
+        self.auth_provider = os.getenv("AUTH_PROVIDER", "firebase").strip().lower() or "firebase"
+        if self.auth_provider not in {"firebase", "supabase"}:
+            raise ValueError("AUTH_PROVIDER must be firebase or supabase.")
+        self.data_provider = os.getenv("DATA_PROVIDER", "firestore").strip().lower() or "firestore"
+        if self.data_provider not in {"firestore", "supabase"}:
+            raise ValueError("DATA_PROVIDER must be firestore or supabase.")
+        self.database_url = os.getenv("DATABASE_URL", "").strip()
+        self.supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+        self.supabase_jwt_audience = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated").strip() or "authenticated"
+        self.supabase_jwt_issuer = (
+            os.getenv("SUPABASE_JWT_ISSUER", "").strip()
+            or (f"{self.supabase_url}/auth/v1" if self.supabase_url else "")
+        )
+        self.supabase_jwks_url = (
+            os.getenv("SUPABASE_JWKS_URL", "").strip()
+            or (f"{self.supabase_url}/auth/v1/.well-known/jwks.json" if self.supabase_url else "")
+        )
+        if self.auth_provider == "supabase" and not all(
+            [self.supabase_url, self.supabase_jwt_issuer, self.supabase_jwks_url]
+        ):
+            raise ValueError("SUPABASE_URL (or explicit issuer/JWKS values) is required for Supabase Auth.")
+        if self.data_provider == "supabase" and not self.database_url:
+            raise ValueError("DATABASE_URL is required when DATA_PROVIDER=supabase.")
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
         self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.gemini_cv_analysis_model = (
@@ -43,11 +74,24 @@ class Settings:
         )
         self.gemini_thinking_budget = int(os.getenv("GEMINI_THINKING_BUDGET", "8000"))
         raw_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "").strip()
-        if raw_embedding_model in {"", "text-embedding-004", "models/text-embedding-004"}:
-            # Migrate legacy/default values to the current supported Gemini embedding model.
-            self.gemini_embedding_model = "gemini-embedding-001"
-        else:
-            self.gemini_embedding_model = raw_embedding_model
+        retired_embedding_models = {
+            "",
+            "text-embedding-004",
+            "models/text-embedding-004",
+            "gemini-embedding-001",
+            "models/gemini-embedding-001",
+        }
+        self.gemini_embedding_model = (
+            DEFAULT_EMBEDDING_MODEL if raw_embedding_model in retired_embedding_models else raw_embedding_model
+        )
+        self.gemini_embedding_dimension = max(
+            128,
+            min(2048, int(_float_env("GEMINI_EMBEDDING_DIMENSION", DEFAULT_EMBEDDING_DIMENSION))),
+        )
+        self.vector_index_version = (
+            os.getenv("VECTOR_INDEX_VERSION", DEFAULT_VECTOR_INDEX_VERSION).strip()
+            or DEFAULT_VECTOR_INDEX_VERSION
+        )
         self.firebase_project_id = os.getenv("FIREBASE_PROJECT_ID", "")
         self.firebase_client_email = os.getenv("FIREBASE_CLIENT_EMAIL", "")
         self.firebase_private_key = os.getenv("FIREBASE_PRIVATE_KEY", "")
@@ -82,7 +126,10 @@ class Settings:
             os.getenv("APPROVED_EXEMPLARS_COLLECTION", "approvedExemplars").strip()
             or "approvedExemplars"
         )
-        self.rubric_version = os.getenv("RUBRIC_VERSION", "v1").strip() or "v1"
+        self.rubric_version = (
+            os.getenv("RUBRIC_VERSION", DEFAULT_RUBRIC_VERSION).strip()
+            or DEFAULT_RUBRIC_VERSION
+        )
         raw_classifier_mode = os.getenv("LOCAL_CLASSIFIER_MODE", "local").strip().lower()
         if raw_classifier_mode not in {"local", "remote", "auto"}:
             raw_classifier_mode = "local"
@@ -93,8 +140,45 @@ class Settings:
         self.local_classifier_confidence_threshold = _float_env("LOCAL_CLASSIFIER_CONFIDENCE_THRESHOLD", 0.60)
         self.rag_similarity_threshold = _float_env("RAG_SIMILARITY_THRESHOLD", 0.75)
         self.rag_max_exemplars = max(1, int(_float_env("RAG_MAX_EXEMPLARS", 2)))
+        self.rag_candidate_limit = max(10, min(500, int(_float_env("RAG_CANDIDATE_LIMIT", 100))))
+        self.ai_preprocess_concurrency = max(1, min(8, int(_float_env("AI_PREPROCESS_CONCURRENCY", 4))))
+        self.require_classifier_ready = os.getenv("REQUIRE_CLASSIFIER_READY", "1").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
         self.redis_url = os.getenv("REDIS_URL", "").strip()
         self.redis_internal_url = os.getenv("REDIS_INTERNAL_URL", "").strip()
+        raw_analysis_job_mode = os.getenv("ANALYSIS_JOB_MODE", "in_process").strip().lower()
+        if raw_analysis_job_mode not in {"in_process", "redis", "auto"}:
+            raw_analysis_job_mode = "in_process"
+        self.analysis_job_mode = raw_analysis_job_mode
+        self.analysis_job_queue_key = (
+            os.getenv("ANALYSIS_JOB_QUEUE_KEY", "supporthr:analysis:stream").strip()
+            or "supporthr:analysis:stream"
+        )
+        self.analysis_job_consumer_group = (
+            os.getenv("ANALYSIS_JOB_CONSUMER_GROUP", "supporthr-workers").strip()
+            or "supporthr-workers"
+        )
+        self.analysis_job_reclaim_idle_seconds = max(
+            60,
+            int(os.getenv("ANALYSIS_JOB_RECLAIM_IDLE_SECONDS", "3600")),
+        )
+        self.analysis_job_stream_max_length = max(
+            1000,
+            int(os.getenv("ANALYSIS_JOB_STREAM_MAX_LENGTH", "10000")),
+        )
+        self.analysis_job_result_ttl_seconds = max(
+            300,
+            int(os.getenv("ANALYSIS_JOB_RESULT_TTL_SECONDS", "86400")),
+        )
+        self.analysis_job_lease_seconds = max(
+            300,
+            int(os.getenv("ANALYSIS_JOB_LEASE_SECONDS", "3600")),
+        )
+        self.analysis_job_max_concurrency_per_user = max(
+            1,
+            int(os.getenv("ANALYSIS_JOB_MAX_CONCURRENCY_PER_USER", "3")),
+        )
         self.account_cache_ttl_seconds = max(15, int(os.getenv("ACCOUNT_CACHE_TTL_SECONDS", "120")))
         self.mobile_inbox_cache_ttl_seconds = max(15, int(os.getenv("MOBILE_INBOX_CACHE_TTL_SECONDS", "60")))
         self.template_cache_ttl_seconds = max(30, int(os.getenv("TEMPLATE_CACHE_TTL_SECONDS", "300")))

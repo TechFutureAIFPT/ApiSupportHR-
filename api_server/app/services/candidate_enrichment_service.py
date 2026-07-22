@@ -4,6 +4,7 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.ai_contract import rank_from_score
 from app.core.config import get_settings
 from app.services.candidate_screening_service import build_candidate_profile, build_screening_summary
 from app.services.gemini_service import embed_text
@@ -1360,12 +1361,15 @@ def enrich_candidates(
     jd_text: str,
     hard_filters: Dict[str, Any],
     owner_uid: str | None = None,
+    *,
+    precomputed_jd_vector: List[float] | None = None,
+    precomputed_cv_vectors: Dict[str, List[float]] | None = None,
 ) -> List[Dict[str, Any]]:
     enriched: List[Dict[str, Any]] = []
     settings = get_settings()
-    jd_vector: List[float] | None = None
+    jd_vector: List[float] | None = precomputed_jd_vector
     cleaned_jd_for_embedding = _prepare_embedding_text(jd_text)
-    if cleaned_jd_for_embedding:
+    if jd_vector is None and cleaned_jd_for_embedding:
         try:
             jd_vector = embed_text(cleaned_jd_for_embedding, settings.gemini_embedding_model)
         except Exception:
@@ -1402,10 +1406,10 @@ def enrich_candidates(
                 screening_summary=screening_summary,
             )
 
-        cv_vector: List[float] | None = None
+        cv_vector: List[float] | None = (precomputed_cv_vectors or {}).get(str(candidate.get("fileName", "")))
         if cv_text:
             cleaned_cv_for_embedding = _prepare_embedding_text(cv_text)
-            if cleaned_cv_for_embedding:
+            if cv_vector is None and cleaned_cv_for_embedding:
                 try:
                     cv_vector = embed_text(cleaned_cv_for_embedding, settings.gemini_embedding_model)
                 except Exception:
@@ -1517,7 +1521,7 @@ def enrich_candidates(
 
         score = _get_analysis_value(analysis, ["Tổng điểm", "Tong diem"])
         if isinstance(score, (int, float)):
-            analysis["Hạng"] = "A" if score >= 75 else "B" if score >= 50 else "C"
+            analysis["Hạng"] = rank_from_score(score)
             analysis["Hang"] = analysis["Hạng"]
         candidate["analysis"] = analysis
         candidate["stageDecision"] = _build_stage_decision(candidate, hard_filters)

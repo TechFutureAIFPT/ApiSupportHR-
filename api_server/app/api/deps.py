@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import Header, HTTPException, Request, status
 
-from app.integrations.firebase_admin import verify_firebase_token
+from app.core.config import get_settings
+from app.integrations.auth_provider import verify_access_token
 from app.schemas.account import AuthenticatedUser
 from app.services.security_service import verify_app_check_if_required
 
@@ -41,11 +42,11 @@ async def get_current_user(request: Request, authorization: str | None = Header(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token không hợp lệ.")
 
     try:
-        decoded = verify_firebase_token(token)
+        decoded = verify_access_token(token)
     except Exception as error:  # pragma: no cover - depends on Firebase runtime
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Không thể xác thực Firebase token: {error}",
+            detail=f"Không thể xác thực {get_settings().auth_provider} token: {error}",
         ) from error
 
     user = AuthenticatedUser(
@@ -75,7 +76,7 @@ async def get_optional_current_user(
         return None
 
     try:
-        decoded = verify_firebase_token(token)
+        decoded = verify_access_token(token)
     except Exception:
         return None
 

@@ -37,8 +37,11 @@ Mục đích:
 ### CV workflow
 
 - `POST /api/cv/analyze-core`
+- `POST /api/cv/analyze-core-async`
 - `POST /api/cv/refine-profile`
 - `POST /api/cv/enrich`
+- `GET /api/rubrics`
+- `GET /api/rubrics/{role_key}`
 
 ## Từng workflow đang làm gì
 
@@ -104,6 +107,10 @@ Mục tiêu:
 - trả về JSON cấu trúc chuẩn cho frontend
 
 Đây là lớp phân tích nền đầu tiên trước khi enrich.
+
+Pipeline v2 resolve rubric 100 diem, kiem cache theo noi dung va version, sau do moi tien xu ly cache miss.
+Moi CV chi chay classifier mot lan va embedding mot lan; routing, approved RAG va enrichment tai su dung lai.
+Tien xu ly co bounded concurrency, con Gemini core gom batch de giam so request.
 
 ### 5. `cv/refine-profile`
 

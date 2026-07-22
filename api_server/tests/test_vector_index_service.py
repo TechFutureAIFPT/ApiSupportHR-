@@ -139,6 +139,8 @@ class VectorIndexServiceTests(unittest.TestCase):
         self.assertEqual(vector_record["metadata"]["ownerUid"], "user-123")
         self.assertEqual(vector_record["metadata"]["fileType"], "cv")
         self.assertEqual(vector_record["vectorModel"], get_settings().gemini_embedding_model)
+        self.assertEqual(vector_record["embeddingDimension"], 768)
+        self.assertEqual(vector_record["vectorIndexVersion"], "gemini-embedding-2-768-v1")
         self.assertEqual(len(self.fake_file_extractions.store), 1)
         extraction_record = next(iter(self.fake_file_extractions.store.values()))
         self.assertEqual(extraction_record["uid"], "user-123")

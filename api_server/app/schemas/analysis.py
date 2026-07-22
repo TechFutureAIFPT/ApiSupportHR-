@@ -126,8 +126,8 @@ class CvTextEntry(BaseModel):
 
 class CoreCvAnalysisRequest(BaseModel):
     jd_text: str = Field(min_length=1)
-    weights: Dict[str, Any]
-    hard_filters: Dict[str, Any]
+    weights: Dict[str, Any] = Field(default_factory=dict)
+    hard_filters: Dict[str, Any] = Field(default_factory=dict)
     cv_entries: List[CvTextEntry]
 
 
@@ -141,13 +141,13 @@ class CoreCvAnalysisResponse(BaseModel):
 
 class AnalysisJobAcceptedResponse(BaseModel):
     job_id: str
-    status: Literal["processing"] = "processing"
+    status: Literal["queued", "processing"] = "processing"
     status_url: str
 
 
 class AnalysisJobStatusResponse(BaseModel):
     job_id: str
-    status: Literal["processing", "completed", "failed"]
+    status: Literal["queued", "processing", "completed", "failed"]
     progress: float = 0.0
     message: str = ""
     result: Dict[str, Any] | None = None
@@ -189,12 +189,15 @@ class CvIndustryClassificationResponse(BaseModel):
     confidence: float | None = None
     top_predictions: List[IndustryPrediction] = Field(default_factory=list)
     model_source: str
+    model_version: str = "unknown"
     saved_record_id: str | None = Field(default=None, alias="savedRecordId")
 
 
 class CvIndustryClassifierStatusResponse(BaseModel):
     ready: bool
     model_source: str
+    model_version: str = "unknown"
+    artifact_sha256: str = ""
     label_count: int = 0
     labels: List[str] = Field(default_factory=list)
     error: str | None = None

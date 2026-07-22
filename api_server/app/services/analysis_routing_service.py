@@ -125,16 +125,26 @@ def _tfidf_match_metadata(jd_english: str, cv_english: str) -> dict[str, Any]:
     }
 
 
-def build_routing_metadata(jd_text: str, cv_text: str) -> dict[str, Any]:
-    try:
-        jd_english, cv_english = _translate_to_technical_english(jd_text, cv_text)
-    except Exception:
+def build_routing_metadata(
+    jd_text: str,
+    cv_text: str,
+    *,
+    classifier_result: dict[str, Any] | None = None,
+    translate: bool = True,
+) -> dict[str, Any]:
+    if translate:
+        try:
+            jd_english, cv_english = _translate_to_technical_english(jd_text, cv_text)
+        except Exception:
+            jd_english, cv_english = jd_text, cv_text
+    else:
         jd_english, cv_english = jd_text, cv_text
 
-    try:
-        classifier_result = classify_cv_text(cv_english, top_k=5)
-    except Exception:
-        return default_routing_metadata()
+    if classifier_result is None:
+        try:
+            classifier_result = classify_cv_text(cv_english, top_k=5)
+        except Exception:
+            return default_routing_metadata()
 
     predicted_industry = str(classifier_result.get("predicted_label") or "unknown").strip() or "unknown"
     confidence = classifier_result.get("confidence")
@@ -158,6 +168,17 @@ def build_routing_metadata(jd_text: str, cv_text: str) -> dict[str, Any]:
     }
 
 
-async def build_routing_metadata_async(jd_text: str, cv_text: str) -> dict[str, Any]:
-    return await asyncio.to_thread(build_routing_metadata, jd_text, cv_text)
-
+async def build_routing_metadata_async(
+    jd_text: str,
+    cv_text: str,
+    *,
+    classifier_result: dict[str, Any] | None = None,
+    translate: bool = True,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        build_routing_metadata,
+        jd_text,
+        cv_text,
+        classifier_result=classifier_result,
+        translate=translate,
+    )

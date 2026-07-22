@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supporthr-api
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: api
+          imagePullPolicy: Never
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supporthr-worker
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: worker
+          imagePullPolicy: Never
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 3Gi

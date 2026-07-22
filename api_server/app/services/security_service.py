@@ -11,7 +11,8 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 
 from app.core.config import get_settings
-from app.integrations.firebase_admin import verify_app_check_token, verify_firebase_token
+from app.integrations.auth_provider import verify_access_token
+from app.integrations.firebase_admin import verify_app_check_token
 from app.integrations import redis_cache
 
 
@@ -57,7 +58,7 @@ def resolve_actor(request: Request) -> ResolvedActor:
     if not token:
         return ResolvedActor(uid=None, email=None)
     try:
-        decoded = verify_firebase_token(token)
+        decoded = verify_access_token(token)
     except Exception:
         return ResolvedActor(uid=None, email=None)
 
@@ -71,7 +72,11 @@ def resolve_actor(request: Request) -> ResolvedActor:
 def verify_app_check_if_required(request: Request) -> bool:
     settings = get_settings()
     origin = (request.headers.get("origin") or "").strip().lower()
-    should_enforce = settings.firebase_appcheck_enforce and bool(origin)
+    should_enforce = (
+        getattr(settings, "auth_provider", "firebase") == "firebase"
+        and settings.firebase_appcheck_enforce
+        and bool(origin)
+    )
     request.state.app_check_verified = not should_enforce
     if not should_enforce:
         return False
@@ -118,7 +123,7 @@ def apply_request_rate_limits(request: Request) -> None:
     ip = resolve_client_ip(request)
     actor = resolve_actor(request)
 
-    if path == "/health":
+    if path.startswith("/health"):
         enforce_window_limit(f"health:{ip}", 30, 60)
         return
 

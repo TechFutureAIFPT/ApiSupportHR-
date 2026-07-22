@@ -29,4 +29,11 @@ dist/
 
 ai_ml/
 artifacts/
-ml_pipeline/
+
+# Offline ML source belongs in this repository; datasets and generated outputs do not.
+ml_pipeline/data/
+ml_pipeline/artifacts/
+ml_pipeline/.venv/
+
+# Runtime model manifests are reviewed deployment inputs, unlike other local JSON files.
+!api_server/app/models/*.manifest.json

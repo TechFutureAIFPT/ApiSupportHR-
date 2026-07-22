@@ -51,6 +51,7 @@ from app.services.file_extraction_service import extract_text_from_upload
 from app.services.gemini_service import embed_text, generate_content
 from app.services.local_classifier_service import classify_cv_text, get_classifier_status
 from app.services.quick_cv_score_service import MAX_CV_COUNT, score_quick_cvs
+from app.services.rubric_service import build_default_rubric, list_rubrics
 from app.services.workflow_service import (
     extract_hard_filters,
     extract_job_position,
@@ -61,6 +62,21 @@ from app.core.config import get_settings
 
 
 router = APIRouter(prefix="/api", tags=["ai"])
+
+
+@router.get("/rubrics")
+def scoring_rubrics() -> dict[str, Any]:
+    settings = get_settings()
+    return {"rubricVersion": settings.rubric_version, "items": list_rubrics(version=settings.rubric_version)}
+
+
+@router.get("/rubrics/{role_key}")
+def scoring_rubric(role_key: str) -> dict[str, Any]:
+    settings = get_settings()
+    rubric = build_default_rubric(role_key, version=settings.rubric_version)
+    if rubric["roleKey"] == "generic" and role_key != "generic":
+        raise HTTPException(status_code=404, detail="Rubric role was not found")
+    return rubric
 
 
 def _parse_quick_cv_texts(raw_value: str | None) -> list[dict[str, str]]:
@@ -189,13 +205,16 @@ async def cv_analyze_core(
     payload: CoreCvAnalysisRequest,
     current_user: AuthenticatedUser | None = Depends(get_optional_current_user),
 ) -> CoreCvAnalysisResponse:
-    result = await run_smart_cv_analysis(
-        payload.jd_text,
-        payload.weights,
-        payload.hard_filters,
-        [entry.model_dump() for entry in payload.cv_entries],
-        current_user=current_user,
-    )
+    try:
+        result = await run_smart_cv_analysis(
+            payload.jd_text,
+            payload.weights,
+            payload.hard_filters,
+            [entry.model_dump() for entry in payload.cv_entries],
+            current_user=current_user,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     return CoreCvAnalysisResponse(
         candidates=result.get("candidates") or [],
         pipeline=result.get("pipeline") or {},
@@ -313,7 +332,7 @@ async def cv_analyze_core_async(
     job = start_analysis_job(payload.model_dump(), current_user=current_user)
     return AnalysisJobAcceptedResponse(
         job_id=str(job["job_id"]),
-        status="processing",
+        status=str(job["status"]),
         status_url=f"/api/analysis/status/{job['job_id']}",
     )
 
@@ -330,7 +349,7 @@ async def create_analysis_job(
     job = start_analysis_job(payload.model_dump(), current_user=current_user)
     return AnalysisJobAcceptedResponse(
         job_id=str(job["job_id"]),
-        status="processing",
+        status=str(job["status"]),
         status_url=f"/api/analysis/status/{job['job_id']}",
     )
 
