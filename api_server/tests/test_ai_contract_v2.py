@@ -12,7 +12,7 @@ from app.core.ai_contract import (
     rank_from_score,
 )
 from app.core.config import get_settings
-from app.repositories.firestore import vector_repository
+from app.repositories.postgres import vector_repository
 from app.services.account.cache_service import build_cv_jd_cache_key
 from app.services.analysis_grounding_service import _is_approved, _rubric_matches, _schema_matches
 from app.services.local_classifier_service import get_classifier_status
@@ -105,29 +105,39 @@ class AiContractV2Tests(unittest.TestCase):
         self.assertEqual(status["label_count"], 24)
 
     def test_native_vector_search_applies_contract_prefilters(self) -> None:
-        captured: dict[str, object] = {"filters": []}
+        captured: dict[str, object] = {}
 
-        class FakeDoc:
-            id = "approved-1"
-
-            def to_dict(self):
-                return {"_vectorDistance": 0.1, "approved": True, "status": "approved"}
-
-        class FakeQuery:
-            def where(self, *, filter):
-                captured["filters"].append((filter.field_path, filter.op_string, filter.value))
+        class FakeCursor:
+            def __enter__(self):
                 return self
 
-            def find_nearest(self, **kwargs):
-                captured["nearest"] = kwargs
+            def __exit__(self, *args):
+                return None
+
+            def execute(self, query, parameters):
+                captured["query"] = query
+                captured["parameters"] = parameters
+
+            def fetchall(self):
+                return [("approved-1", {"approved": True, "status": "approved"}, 0.9)]
+
+        class FakeConnection:
+            def __enter__(self):
                 return self
 
-            def stream(self):
-                return [FakeDoc()]
+            def __exit__(self, *args):
+                return None
 
-        original = vector_repository.vector_library
+            def cursor(self):
+                return FakeCursor()
+
+        class FakePool:
+            def connection(self):
+                return FakeConnection()
+
+        original = vector_repository.get_postgres_pool
         try:
-            vector_repository.vector_library = lambda _: FakeQuery()  # type: ignore[assignment]
+            vector_repository.get_postgres_pool = lambda: FakePool()  # type: ignore[assignment]
             result = vector_repository.find_nearest_approved_exemplars(
                 collection_name="approvedExemplars",
                 query_vector=[0.1, 0.2],
@@ -137,18 +147,13 @@ class AiContractV2Tests(unittest.TestCase):
                 similarity_threshold=0.75,
             )
         finally:
-            vector_repository.vector_library = original  # type: ignore[assignment]
+            vector_repository.get_postgres_pool = original  # type: ignore[assignment]
 
-        self.assertEqual(
-            captured["filters"],
-            [
-                ("status", "==", "approved"),
-                ("approved", "==", True),
-                ("rubricVersion", "==", "v2"),
-                ("vectorIndexVersion", "==", "gemini-embedding-2-768-v1"),
-            ],
-        )
-        self.assertEqual(captured["nearest"]["distance_threshold"], 0.25)
+        self.assertIn("approved = true", str(captured["query"]))
+        self.assertIn("status = 'approved'", str(captured["query"]))
+        self.assertEqual(captured["parameters"][1], "v2")
+        self.assertEqual(captured["parameters"][2], "gemini-embedding-2-768-v1")
+        self.assertEqual(captured["parameters"][4], 0.75)
         self.assertAlmostEqual(result[0]["similarity"], 0.9)
 
 

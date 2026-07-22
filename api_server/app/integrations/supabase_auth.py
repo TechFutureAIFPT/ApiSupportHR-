@@ -11,7 +11,7 @@ def _jwks_client(jwks_url: str) -> Any:
     try:
         from jwt import PyJWKClient
     except ModuleNotFoundError as error:  # pragma: no cover - deployment dependency
-        raise RuntimeError("PyJWT is required when AUTH_PROVIDER=supabase.") from error
+        raise RuntimeError("PyJWT is required for Supabase Auth.") from error
     return PyJWKClient(jwks_url, cache_keys=True, lifespan=300)
 
 
@@ -20,7 +20,7 @@ def verify_supabase_token(token: str) -> dict[str, Any]:
     try:
         import jwt
     except ModuleNotFoundError as error:  # pragma: no cover - deployment dependency
-        raise RuntimeError("PyJWT is required when AUTH_PROVIDER=supabase.") from error
+        raise RuntimeError("PyJWT is required for Supabase Auth.") from error
 
     settings = get_settings()
     signing_key = _jwks_client(settings.supabase_jwks_url).get_signing_key_from_jwt(token)

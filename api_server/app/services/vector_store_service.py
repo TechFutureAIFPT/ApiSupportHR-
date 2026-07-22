@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import json
 import math
 import re
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from app.core.ai_contract import is_current_vector_contract
 from app.core.config import get_settings
-from app.repositories.firestore import vector_repository as repo
+from app.repositories.postgres import vector_repository as repo
 from app.services.gemini_service import embed_text
 
 
@@ -83,45 +80,11 @@ def _matches_vector_contract(record: dict[str, Any]) -> bool:
     )
 
 
-def _legacy_json_dir() -> Path:
-    return Path(__file__).resolve().parents[2].parent / "frontend" / "public" / "data"
-
-
-def _candidate_json_paths(collection_key: str, configured_dir: str) -> list[Path]:
-    filename = f"{collection_key}-embeddings.json"
-    paths = [Path(configured_dir) / filename, _legacy_json_dir() / filename]
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for path in paths:
-        key = str(path.resolve()) if path.exists() else str(path)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(path)
-    return deduped
-
-
-@lru_cache(maxsize=32)
-def _load_json_records(collection_key: str, configured_dir: str) -> list[dict[str, Any]]:
-    for path in _candidate_json_paths(collection_key, configured_dir):
-        if not path.exists():
-            continue
-        data = json.loads(path.read_text(encoding="utf-8"))
-        records = data.get("records", []) if isinstance(data, dict) else []
-        normalized = [
-            _normalize_record(record, fallback_id=f"{collection_key}-{index}")
-            for index, record in enumerate(records)
-            if isinstance(record, dict)
-        ]
-        return [record for record in normalized if record["vector"] and _matches_vector_contract(record)]
-    return []
-
-
 def clear_vector_store_cache() -> None:
-    _load_json_records.cache_clear()
+    return None
 
 
-def _load_firestore_records(
+def _load_supabase_records(
     collection_key: str,
     collection_name: str,
     *,
@@ -158,18 +121,13 @@ def _load_collection_records(
     exclude_file_names: set[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     settings = get_settings()
-    preferred_provider = (provider or settings.vector_store_provider or "auto").strip().lower()
-    if preferred_provider in {"auto", "firestore", "hybrid"}:
-        records = _load_firestore_records(
-            collection_key,
-            settings.vector_store_firestore_collection,
-            owner_uid=owner_uid,
-            exclude_file_names=exclude_file_names,
-        )
-        if records:
-            return "firestore", records
-    records = _load_json_records(collection_key, settings.vector_store_json_dir)
-    return "json", records
+    records = _load_supabase_records(
+        collection_key,
+        settings.vector_store_collection,
+        owner_uid=owner_uid,
+        exclude_file_names=exclude_file_names,
+    )
+    return "supabase", records
 
 
 def search_similar_records(

@@ -5,8 +5,6 @@ metadata:
 data:
   APP_NAME: SupportHR Backend
   FRONTEND_ORIGIN: https://www.supporthr-tf.com.vn
-  AUTH_PROVIDER: firebase
-  DATA_PROVIDER: firestore
   MAINTENANCE_MODE: "false"
   SUPABASE_JWT_AUDIENCE: authenticated
   ANALYSIS_JOB_MODE: redis
@@ -24,8 +22,7 @@ data:
   UPLOAD_FILE_SIZE_LIMIT_MB: "15"
   LOCAL_CLASSIFIER_MODE: local
   REQUIRE_CLASSIFIER_READY: "true"
-  VECTOR_STORE_PROVIDER: firestore
-  VECTOR_STORE_FIRESTORE_COLLECTION: vectorLibraryRecords
+  VECTOR_STORE_COLLECTION: vectorLibraryRecords
   APPROVED_EXEMPLARS_COLLECTION: approvedExemplars
   GEMINI_EMBEDDING_MODEL: gemini-embedding-2
   GEMINI_EMBEDDING_DIMENSION: "768"

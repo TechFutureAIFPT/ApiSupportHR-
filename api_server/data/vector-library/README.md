@@ -1,6 +1,6 @@
-# Vector Library
+# Legacy Vector Seed Library
 
-Thu muc nay la noi backend uu tien tim cac file vector library theo tung collection.
+Thu muc nay chi luu seed JSON cu de doi soat va tai tao du lieu. Backend production khong doc JSON luc runtime.
 
 Ten file mac dinh:
 
@@ -37,17 +37,14 @@ Cau truc file:
 }
 ```
 
-Neu `VECTOR_STORE_PROVIDER=firestore` thi backend se uu tien doc Firestore truoc.
-Neu Firestore khong co record hop le, backend se fallback ve JSON library trong thu muc nay.
+Supabase runtime hien tai hoat dong theo 2 bang:
 
-Firestore mode hien tai hoat dong theo 2 nguon:
-
-- `vectorLibraryRecords`: collection index chinh cho semantic search
-- `uploadedFiles`: du lieu goc, duoc backend tu dong embed va dong bo sang `vectorLibraryRecords`
+- `vector_library_records`: bang pgvector chinh cho semantic search
+- `uploaded_files`: du lieu goc, duoc backend tu dong embed va dong bo sang `vector_library_records`
 
 Luot sync hien tai:
 
-- Khi luu `uploadedFiles` co `fileType=cv`, backend thu embed va tao record Firestore
+- Khi luu `uploaded_files` co `file_type=cv`, backend thu embed va tao record PostgreSQL
 - Record duoc gan `metadata.ownerUid` de `/api/cv/enrich` chi tim trong thu vien vector cua dung user dang goi API
 - Neu can backfill du lieu cu, goi:
 

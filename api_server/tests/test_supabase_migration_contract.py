@@ -9,7 +9,7 @@ from unittest.mock import patch
 from app.core.config import Settings
 from app.integrations.data_crypto import decrypt_secret_payload, encrypt_secret_payload
 from app.repositories.postgres.document_store import COLLECTION_TABLES as RUNTIME_TABLES
-from scripts.firebase_supabase_migration import COLLECTION_TABLES as MIGRATION_TABLES, _target_collisions
+from scripts.legacy_source_supabase_migration import COLLECTION_TABLES as MIGRATION_TABLES, _target_collisions
 
 
 class SupabaseMigrationContractTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class SupabaseMigrationContractTests(unittest.TestCase):
             Path(__file__).resolve().parents[2]
             / "supabase"
             / "migrations"
-            / "202607220001_firebase_to_supabase.sql"
+            / "202607220001_legacy_source_to_supabase.sql"
         ).read_text(encoding="utf-8")
         for table in set(MIGRATION_TABLES.values()):
             self.assertIn(f"'{table}'", migration_sql)
@@ -39,14 +39,16 @@ class SupabaseMigrationContractTests(unittest.TestCase):
             self.assertNotIn(b"plain-access", encrypted)
             self.assertEqual(decrypt_secret_payload(encrypted), secret)
 
-    def test_supabase_provider_requires_runtime_coordinates(self) -> None:
+    def test_runtime_has_no_legacy_provider_switches(self) -> None:
         with patch.dict(
             os.environ,
-            {"AUTH_PROVIDER": "supabase", "DATA_PROVIDER": "supabase", "SUPABASE_URL": "", "DATABASE_URL": ""},
+            {"AUTH_PROVIDER": "firebase", "DATA_PROVIDER": "firestore", "SUPABASE_URL": "https://example.supabase.co", "DATABASE_URL": "postgresql://example"},
             clear=False,
         ):
-            with self.assertRaises(ValueError):
-                Settings()
+            settings = Settings()
+        self.assertFalse(hasattr(settings, "auth_provider"))
+        self.assertFalse(hasattr(settings, "data_provider"))
+        self.assertEqual(settings.supabase_url, "https://example.supabase.co")
 
 
 if __name__ == "__main__":

@@ -52,5 +52,5 @@ Publishing directly is deliberately harder and should be used only after recruit
 python ml_pipeline/seed_exemplars.py --data-csv D:/reviewed/exemplars.csv --status approved --allow-approved
 ```
 
-Create the Firestore composite vector index documented in the deployment guide before enabling native
-nearest-neighbor retrieval. During the index creation window the API uses a bounded compatibility query.
+Apply the Supabase pgvector migration and HNSW cosine index before enabling native nearest-neighbor retrieval.
+The seed command writes directly to `public.approved_exemplars` through `DATABASE_URL`.

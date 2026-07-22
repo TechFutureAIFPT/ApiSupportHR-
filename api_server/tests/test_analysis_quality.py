@@ -52,31 +52,6 @@ def _install_dependency_stubs() -> None:
         pydantic_module.RootModel = RootModel
         sys.modules["pydantic"] = pydantic_module
 
-    if not _module_available("firebase_admin"):
-        firebase_admin_module = types.ModuleType("firebase_admin")
-        firebase_admin_module._apps = []
-        firebase_admin_module.App = object
-        firebase_admin_module.get_app = lambda: object()
-        firebase_admin_module.initialize_app = lambda *args, **kwargs: object()
-
-        auth_module = types.ModuleType("firebase_admin.auth")
-        auth_module.verify_id_token = lambda *args, **kwargs: {}
-
-        credentials_module = types.ModuleType("firebase_admin.credentials")
-        credentials_module.Certificate = lambda payload: payload
-
-        firestore_module = types.ModuleType("firebase_admin.firestore")
-        firestore_module.client = lambda *args, **kwargs: object()
-
-        firebase_admin_module.auth = auth_module
-        firebase_admin_module.credentials = credentials_module
-        firebase_admin_module.firestore = firestore_module
-
-        sys.modules["firebase_admin"] = firebase_admin_module
-        sys.modules["firebase_admin.auth"] = auth_module
-        sys.modules["firebase_admin.credentials"] = credentials_module
-        sys.modules["firebase_admin.firestore"] = firestore_module
-
     if not _module_available("fastapi"):
         fastapi_module = types.ModuleType("fastapi")
 

@@ -149,14 +149,11 @@ def _readiness_payload() -> dict[str, object]:
     redis_ready = redis_cache.ping() if redis_required else None
     if redis_required and not redis_ready:
         raise HTTPException(status_code=503, detail="Redis analysis queue is not ready")
-    postgres_required = settings.data_provider == "supabase"
-    postgres_is_ready = None
-    if postgres_required:
-        from app.integrations.postgres import postgres_ready
+    from app.integrations.postgres import postgres_ready
 
-        postgres_is_ready = postgres_ready()
-        if not postgres_is_ready:
-            raise HTTPException(status_code=503, detail="Supabase PostgreSQL is not ready")
+    postgres_is_ready = postgres_ready()
+    if not postgres_is_ready:
+        raise HTTPException(status_code=503, detail="Supabase PostgreSQL is not ready")
     return {
         "status": "ok",
         "classifier": {
@@ -169,7 +166,7 @@ def _readiness_payload() -> dict[str, object]:
             "redisReady": redis_ready,
         },
         "data": {
-            "provider": settings.data_provider,
+            "provider": "supabase",
             "postgresReady": postgres_is_ready,
         },
     }
@@ -196,7 +193,6 @@ app = CORSMiddleware(
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}):(8081|8090|19006)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "If-None-Match"]
-    + (["X-Firebase-AppCheck"] if settings.auth_provider == "firebase" else []),
+    allow_headers=["Authorization", "Content-Type", "If-None-Match"],
     expose_headers=["ETag", "X-Data-Revision"],
 )

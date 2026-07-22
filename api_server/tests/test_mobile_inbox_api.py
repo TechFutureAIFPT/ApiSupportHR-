@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user
 from app.main import api_app
-from app.repositories.firestore import account_repository as repo
+from app.repositories.postgres import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 
 
@@ -19,6 +19,23 @@ class FakeDocumentSnapshot:
 
     def to_dict(self) -> dict[str, Any]:
         return deepcopy(self._collection.store.get(self.id, {}))
+
+    @property
+    def exists(self) -> bool:
+        return self.id in self._collection.store
+
+
+class FakeDocumentReference:
+    def __init__(self, collection: "FakeCollection", doc_id: str):
+        self._collection = collection
+        self.id = doc_id
+
+    def get(self) -> FakeDocumentSnapshot:
+        return FakeDocumentSnapshot(self._collection, self.id)
+
+    def set(self, payload: dict[str, Any], merge: bool = False) -> None:
+        current = self._collection.store.get(self.id, {}) if merge else {}
+        self._collection.store[self.id] = {**current, **deepcopy(payload)}
 
 
 class FakeQuery:
@@ -44,21 +61,28 @@ class FakeCollection:
             raise NotImplementedError("FakeCollection only supports equality filters.")
         return FakeQuery(self, field_name, expected_value)
 
+    def document(self, doc_id: str) -> FakeDocumentReference:
+        return FakeDocumentReference(self, doc_id)
+
 
 class MobileInboxApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(api_app)
         self.fake_cv_history = FakeCollection()
         self.fake_synced_history = FakeCollection()
+        self.fake_mobile_inbox_views = FakeCollection()
         self.original_cv_history = repo.cv_history
         self.original_synced_history = repo.synced_history
+        self.original_mobile_inbox_views = repo.mobile_inbox_views
 
         repo.cv_history = lambda: self.fake_cv_history  # type: ignore[assignment]
         repo.synced_history = lambda: self.fake_synced_history  # type: ignore[assignment]
+        repo.mobile_inbox_views = lambda: self.fake_mobile_inbox_views  # type: ignore[assignment]
 
     def tearDown(self) -> None:
         repo.cv_history = self.original_cv_history  # type: ignore[assignment]
         repo.synced_history = self.original_synced_history  # type: ignore[assignment]
+        repo.mobile_inbox_views = self.original_mobile_inbox_views  # type: ignore[assignment]
         api_app.dependency_overrides.clear()
         self.client.close()
 

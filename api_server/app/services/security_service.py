@@ -11,8 +11,7 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 
 from app.core.config import get_settings
-from app.integrations.auth_provider import verify_access_token
-from app.integrations.firebase_admin import verify_app_check_token
+from app.integrations.supabase_access import verify_access_token
 from app.integrations import redis_cache
 
 
@@ -67,29 +66,6 @@ def resolve_actor(request: Request) -> ResolvedActor:
     request.state.auth_uid = uid
     request.state.auth_email = email
     return ResolvedActor(uid=uid, email=email)
-
-
-def verify_app_check_if_required(request: Request) -> bool:
-    settings = get_settings()
-    origin = (request.headers.get("origin") or "").strip().lower()
-    should_enforce = (
-        getattr(settings, "auth_provider", "firebase") == "firebase"
-        and settings.firebase_appcheck_enforce
-        and bool(origin)
-    )
-    request.state.app_check_verified = not should_enforce
-    if not should_enforce:
-        return False
-
-    token = (request.headers.get("x-firebase-appcheck") or "").strip()
-    if not token:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Thiáº¿u X-Firebase-AppCheck.")
-    try:
-        verify_app_check_token(token)
-    except Exception as error:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Firebase App Check khÃ´ng há»£p lá»‡: {error}") from error
-    request.state.app_check_verified = True
-    return True
 
 
 def _fallback_check_limit(key: str, limit: int, window_seconds: int) -> bool:

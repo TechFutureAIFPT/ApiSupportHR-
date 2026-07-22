@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
@@ -35,12 +34,6 @@ class Settings:
 
         self.app_name = os.getenv("APP_NAME", "SupportHR Backend")
         self.maintenance_mode = os.getenv("MAINTENANCE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
-        self.auth_provider = os.getenv("AUTH_PROVIDER", "firebase").strip().lower() or "firebase"
-        if self.auth_provider not in {"firebase", "supabase"}:
-            raise ValueError("AUTH_PROVIDER must be firebase or supabase.")
-        self.data_provider = os.getenv("DATA_PROVIDER", "firestore").strip().lower() or "firestore"
-        if self.data_provider not in {"firestore", "supabase"}:
-            raise ValueError("DATA_PROVIDER must be firestore or supabase.")
         self.database_url = os.getenv("DATABASE_URL", "").strip()
         self.supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
         self.supabase_jwt_audience = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated").strip() or "authenticated"
@@ -52,12 +45,6 @@ class Settings:
             os.getenv("SUPABASE_JWKS_URL", "").strip()
             or (f"{self.supabase_url}/auth/v1/.well-known/jwks.json" if self.supabase_url else "")
         )
-        if self.auth_provider == "supabase" and not all(
-            [self.supabase_url, self.supabase_jwt_issuer, self.supabase_jwks_url]
-        ):
-            raise ValueError("SUPABASE_URL (or explicit issuer/JWKS values) is required for Supabase Auth.")
-        if self.data_provider == "supabase" and not self.database_url:
-            raise ValueError("DATABASE_URL is required when DATA_PROVIDER=supabase.")
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
         self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.gemini_cv_analysis_model = (
@@ -92,19 +79,6 @@ class Settings:
             os.getenv("VECTOR_INDEX_VERSION", DEFAULT_VECTOR_INDEX_VERSION).strip()
             or DEFAULT_VECTOR_INDEX_VERSION
         )
-        self.firebase_project_id = os.getenv("FIREBASE_PROJECT_ID", "")
-        self.firebase_client_email = os.getenv("FIREBASE_CLIENT_EMAIL", "")
-        self.firebase_private_key = os.getenv("FIREBASE_PRIVATE_KEY", "")
-        self.firebase_service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
-        self.firebase_web_api_key = os.getenv("FIREBASE_WEB_API_KEY", "")
-        self.firebase_auth_domain = os.getenv("FIREBASE_AUTH_DOMAIN", "")
-        self.firebase_database_url = os.getenv("FIREBASE_DATABASE_URL", "")
-        self.firebase_storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET", "")
-        self.firebase_messaging_sender_id = os.getenv("FIREBASE_MESSAGING_SENDER_ID", "")
-        self.firebase_app_id = os.getenv("FIREBASE_APP_ID", "")
-        self.firebase_measurement_id = os.getenv("FIREBASE_MEASUREMENT_ID", "")
-        self.firebase_appcheck_site_key = os.getenv("FIREBASE_APPCHECK_SITE_KEY", "")
-        self.firebase_appcheck_enforce = os.getenv("FIREBASE_APPCHECK_ENFORCE", "0").strip().lower() in {"1", "true", "yes", "on"}
         self.google_api_key = os.getenv("GOOGLE_API_KEY", "")
         self.google_picker_api_key = os.getenv("GOOGLE_PICKER_API_KEY", "")
         self.google_cloud_vision_api_key = os.getenv("GOOGLE_CLOUD_VISION_API_KEY", "")
@@ -113,13 +87,8 @@ class Settings:
         self.google_oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
         self.google_oauth_redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "")
         raw_drive_origins = os.getenv("GOOGLE_DRIVE_ALLOWED_ORIGINS", "").strip()
-        self.vector_store_provider = os.getenv("VECTOR_STORE_PROVIDER", "auto").strip().lower() or "auto"
-        self.vector_store_json_dir = os.getenv(
-            "VECTOR_STORE_JSON_DIR",
-            str(Path(__file__).resolve().parents[2] / "data" / "vector-library"),
-        )
-        self.vector_store_firestore_collection = (
-            os.getenv("VECTOR_STORE_FIRESTORE_COLLECTION", "vectorLibraryRecords").strip()
+        self.vector_store_collection = (
+            os.getenv("VECTOR_STORE_COLLECTION", "vectorLibraryRecords").strip()
             or "vectorLibraryRecords"
         )
         self.approved_exemplars_collection = (

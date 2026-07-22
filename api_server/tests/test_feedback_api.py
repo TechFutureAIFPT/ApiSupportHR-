@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user
 from app.api.routes.account.history import router as history_router
-from app.repositories.firestore import account_repository as repo
+from app.repositories.postgres import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 
 
@@ -65,7 +65,7 @@ class FakeAggregationQuery:
 
 
 class FakeQuery:
-    """Fake Firestore query hỗ trợ where() chained, order_by()+limit(), và count()/sum()
+    """Fake document query hỗ trợ where() chained, order_by()+limit(), và count()/sum()
     aggregation — đủ để test các query pattern thật (không chỉ nhánh fallback full-scan)."""
 
     def __init__(self, collection: "FakeCollection", filters: list[tuple[str, Any]] | None = None):

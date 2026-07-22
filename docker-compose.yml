@@ -24,8 +24,6 @@ services:
       PORT: "8000"
       REDIS_INTERNAL_URL: redis://redis:6379/0
       ANALYSIS_JOB_MODE: redis
-      AUTH_PROVIDER: ${AUTH_PROVIDER:-firebase}
-      DATA_PROVIDER: ${DATA_PROVIDER:-firestore}
       MAINTENANCE_MODE: ${MAINTENANCE_MODE:-false}
     depends_on:
       redis:
@@ -53,8 +51,6 @@ services:
     environment:
       REDIS_INTERNAL_URL: redis://redis:6379/0
       ANALYSIS_JOB_MODE: redis
-      AUTH_PROVIDER: ${AUTH_PROVIDER:-firebase}
-      DATA_PROVIDER: ${DATA_PROVIDER:-firestore}
       MAINTENANCE_MODE: ${MAINTENANCE_MODE:-false}
     command: ["python", "-m", "app.workers.analysis_worker"]
     depends_on:

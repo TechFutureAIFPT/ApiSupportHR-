@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Offline legacy-source export/import utility; never installed in the production runtime."""
+
 import argparse
 import base64
 import hashlib

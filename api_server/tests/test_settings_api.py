@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user
 from app.main import api_app
-from app.repositories.firestore import account_repository as repo
+from app.repositories.postgres import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 
 

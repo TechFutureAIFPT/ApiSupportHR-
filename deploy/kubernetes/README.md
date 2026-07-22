@@ -7,7 +7,7 @@ This directory contains a Kustomize base plus local and production overlays.
 - `supporthr-api`: stateless FastAPI pods behind a ClusterIP Service.
 - `supporthr-worker`: separate durable-analysis workers consuming the Redis queue.
 - Redis: local overlay only. Production should use a managed, highly available Redis service.
-- Firebase/Firestore remains the default before migration reconciliation. After cutover, Supabase Auth/PostgreSQL is the system of record; Redis still holds queue payloads, short-lived job state, cache and distributed limits.
+- Supabase/PostgreSQL remains the default before migration reconciliation. After cutover, Supabase Auth/PostgreSQL is the system of record; Redis still holds queue payloads, short-lived job state, cache and distributed limits.
 
 ## Build the image
 

@@ -31,7 +31,7 @@ All scoring and retrieval data uses explicit contracts:
 - exemplar schema `supporthr-exemplar-v2`, where missing approval means not approved;
 - embedding `gemini-embedding-2`, dimension 768, vector index `gemini-embedding-2-768-v1`.
 
-Firestore native nearest-neighbor search is the production RAG path. A bounded local scan exists only for
+PostgreSQL native nearest-neighbor search is the production RAG path. A bounded local scan exists only for
 the index creation/test window. Cache identity includes content and all scoring/model contract versions.
 
 ## Trade-offs

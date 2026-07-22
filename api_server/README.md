@@ -1,6 +1,6 @@
 ## Backend
 
-FastAPI backend for CV analysis, recruiter workflow automation, Google Drive import, and feedback/evaluation loops. The data/auth layer supports Firebase/Firestore before cutover and Supabase Auth/PostgreSQL afterward.
+FastAPI backend for CV analysis, recruiter workflow automation, Google Drive import, and feedback/evaluation loops. The data/auth layer supports Supabase/PostgreSQL before cutover and Supabase Auth/PostgreSQL afterward.
 
 ### Project documentation
 
@@ -56,13 +56,10 @@ When testing the mobile app against this Docker backend:
 - Keep your local `.env` for testing.
 - Use `.env.example` as the public-safe template when pushing code to Git.
 - Required minimum for backend startup:
-  - `FIREBASE_SERVICE_ACCOUNT_JSON` or `FIREBASE_PROJECT_ID` + `FIREBASE_CLIENT_EMAIL` + `FIREBASE_PRIVATE_KEY`
-  - `GEMINI_API_KEY_1`
-  - packaged `app/models/text_classifier_model.pkl` and matching `.manifest.json`
-- Supabase cutover mode additionally requires:
-  - `AUTH_PROVIDER=supabase` and `DATA_PROVIDER=supabase`
   - `SUPABASE_URL` and pooled `DATABASE_URL`
   - base64 32-byte `DATA_ENCRYPTION_KEY`
+  - `GEMINI_API_KEY_1`
+  - packaged `app/models/text_classifier_model.pkl` and matching `.manifest.json`
 - Required for Google Drive import:
   - `GOOGLE_OAUTH_CLIENT_ID`
   - `GOOGLE_OAUTH_CLIENT_SECRET`
@@ -79,7 +76,7 @@ AI/RAG production contract:
 - `GEMINI_EMBEDDING_DIMENSION=768`
 - `VECTOR_INDEX_VERSION=gemini-embedding-2-768-v1`
 - `RUBRIC_VERSION=v2`
-- `VECTOR_STORE_PROVIDER=firestore` before cutover; the repository routes this contract to PostgreSQL when `DATA_PROVIDER=supabase`.
+- `VECTOR_STORE_COLLECTION=vectorLibraryRecords`; PostgreSQL/pgvector is the only runtime vector store.
 
 Migration commands and safety gates are documented in `scripts/README-supabase-migration.md`.
 
@@ -127,7 +124,7 @@ backend/
 - Do not commit `.env`, service-account JSON files, or private API keys.
 - Keep docs in `docs/` and runtime data samples in `data/`.
 - Put new HTTP endpoints under `app/api/routes/` instead of growing a single route file.
-- Keep Firestore collection access inside `app/repositories/`.
+- Keep PostgreSQL collection access inside `app/repositories/`.
 - Keep business logic inside `app/services/`.
 
 ### Key API flows
@@ -147,7 +144,7 @@ Async CV analysis:
 - `POST /api/cv/analyze-core-async` returns `202 Accepted` with `job_id`.
 - `POST /api/analysis/jobs` is the queue-oriented alias for creating the same analysis job.
 - `GET /api/analysis/status/{job_id}` returns `queued`, `processing`, `completed`, or `failed` for frontend polling.
-- Completed jobs include the normal `{ candidates, pipeline }` payload and are persisted to Firestore history when the request has a valid Firebase user.
+- Completed jobs include the normal `{ candidates, pipeline }` payload and are persisted to PostgreSQL history when the request has a valid Supabase user.
 
 ### Deploy
 

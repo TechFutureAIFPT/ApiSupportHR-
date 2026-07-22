@@ -1,4 +1,4 @@
--- SupportHR Firebase -> Supabase foundation.
+-- SupportHR legacy source -> Supabase foundation.
 -- Safe to re-run: tables, indexes, grants, policies, and publication entries are idempotent.
 
 create extension if not exists pgcrypto;

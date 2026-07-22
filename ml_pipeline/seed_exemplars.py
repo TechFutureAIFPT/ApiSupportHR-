@@ -83,11 +83,15 @@ def attach_embedding(record: dict[str, Any], client: Any) -> dict[str, Any]:
     return record
 
 
+def payload_checksum(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare or seed canonical SupportHR RAG exemplars.")
     parser.add_argument("--data-csv", required=True)
-    parser.add_argument("--collection", default="approvedExemplars")
-    parser.add_argument("--project", default=os.getenv("GOOGLE_CLOUD_PROJECT"))
+    parser.add_argument("--database-url", default=os.getenv("DATABASE_URL"))
     parser.add_argument("--status", choices=("pending", "approved"), default="pending")
     parser.add_argument("--allow-approved", action="store_true")
     parser.add_argument("--with-embeddings", action="store_true")
@@ -114,26 +118,60 @@ def main() -> int:
         print(f"Prepared {count} records.")
         return 0
 
-    from google.cloud import firestore
-    from google.cloud.firestore_v1.vector import Vector
-    db = firestore.Client(project=args.project) if args.project else firestore.Client()
-    batch = db.batch()
-    pending = total = 0
-    for record in iterable:
-        doc_id = str(record.pop("id"))
-        if isinstance(record.get("embedding"), list):
-            record["embedding"] = Vector(record["embedding"])
-        record["updatedAt"] = firestore.SERVER_TIMESTAMP
-        batch.set(db.collection(args.collection).document(doc_id), record, merge=True)
-        pending += 1
-        total += 1
-        if pending >= 400:
-            batch.commit()
-            batch = db.batch()
-            pending = 0
-    if pending:
-        batch.commit()
-    print(f"Seeded {total} {args.status} records into {args.collection}.")
+    if not args.database_url:
+        raise SystemExit("Set DATABASE_URL or pass --database-url before seeding Supabase.")
+
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    total = 0
+    with psycopg.connect(args.database_url) as connection:
+        with connection.cursor() as cursor:
+            for record in iterable:
+                clean = dict(record)
+                doc_id = str(clean.pop("id"))
+                embedding = clean.pop("embedding", None)
+                vector_text = None
+                if isinstance(embedding, list):
+                    vector_text = "[" + ",".join(str(float(item)) for item in embedding) + "]"
+                clean["updatedAt"] = clean.get("updatedAt") or "seeded-by-ml-pipeline"
+                cursor.execute(
+                    """
+                    insert into public.approved_exemplars
+                      (id, payload, source_payload, source_collection, source_document_id,
+                       source_checksum, migrated_at, updated_at, status, approved,
+                       rubric_version, embedding_model, vector_index_version, embedding)
+                    values (%s, %s, %s, 'approvedExemplars', %s, %s, now(), now(),
+                            %s, %s, %s, %s, %s, %s::vector)
+                    on conflict (id) do update set
+                      payload = excluded.payload,
+                      source_payload = excluded.source_payload,
+                      source_checksum = excluded.source_checksum,
+                      updated_at = now(),
+                      status = excluded.status,
+                      approved = excluded.approved,
+                      rubric_version = excluded.rubric_version,
+                      embedding_model = excluded.embedding_model,
+                      vector_index_version = excluded.vector_index_version,
+                      embedding = coalesce(excluded.embedding, public.approved_exemplars.embedding)
+                    """,
+                    (
+                        doc_id,
+                        Jsonb(clean),
+                        Jsonb(clean),
+                        doc_id,
+                        payload_checksum(clean),
+                        clean["status"],
+                        bool(clean["approved"]),
+                        clean["rubricVersion"],
+                        clean["embeddingModel"],
+                        clean["vectorIndexVersion"],
+                        vector_text,
+                    ),
+                )
+                total += 1
+        connection.commit()
+    print(f"Seeded {total} {args.status} records into Supabase approved_exemplars.")
     return 0
 
 

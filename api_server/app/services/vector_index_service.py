@@ -4,8 +4,8 @@ import re
 from typing import Any
 
 from app.core.config import get_settings
-from app.repositories.firestore import account_repository as account_repo
-from app.repositories.firestore import vector_repository as vector_repo
+from app.repositories.postgres import account_repository as account_repo
+from app.repositories.postgres import vector_repository as vector_repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.shared import serialize, sorted_docs
 from app.services.gemini_service import embed_text
@@ -224,7 +224,7 @@ def sync_uploaded_file_to_vector_store(
             "reason": skip_reason,
         }
 
-    collection_name = get_settings().vector_store_firestore_collection
+    collection_name = get_settings().vector_store_collection
     doc_ref = vector_repo.vector_library(collection_name).document(record["id"])
     snapshot = doc_ref.get()
     current = snapshot.to_dict() or {}
@@ -274,7 +274,7 @@ def try_sync_uploaded_file_to_vector_store(
 
 def delete_uploaded_file_vector_record(source_id: str) -> None:
     try:
-        collection_name = get_settings().vector_store_firestore_collection
+        collection_name = get_settings().vector_store_collection
         vector_repo.vector_library(collection_name).document(vector_record_id_for_uploaded_file(source_id)).delete()
     except Exception:
         return

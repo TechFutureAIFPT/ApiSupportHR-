@@ -8,8 +8,8 @@ import unicodedata
 from typing import Any
 
 from app.core.ai_contract import EXEMPLAR_SCHEMA_VERSION, is_current_vector_contract
-from app.repositories.firestore import account_repository as repo
-from app.repositories.firestore import vector_repository as vector_repo
+from app.repositories.postgres import account_repository as repo
+from app.repositories.postgres import vector_repository as vector_repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.history_service import fetch_recent_history
 from app.services.gemini_service import embed_text
@@ -516,17 +516,15 @@ def _approved_collection_ref():
 
 
 def _fetch_approved_records(rubric_version: str) -> list[dict[str, Any]]:
-    from google.cloud.firestore_v1.base_query import FieldFilter
-
     settings = get_settings()
     collection_ref = _approved_collection_ref()
     try:
         docs = list(
             collection_ref
-            .where(filter=FieldFilter("status", "==", "approved"))
-            .where(filter=FieldFilter("approved", "==", True))
-            .where(filter=FieldFilter("rubricVersion", "==", rubric_version))
-            .where(filter=FieldFilter("vectorIndexVersion", "==", settings.vector_index_version))
+            .where("status", "==", "approved")
+            .where("approved", "==", True)
+            .where("rubricVersion", "==", rubric_version)
+            .where("vectorIndexVersion", "==", settings.vector_index_version)
             .limit(settings.rag_candidate_limit)
             .stream()
         )

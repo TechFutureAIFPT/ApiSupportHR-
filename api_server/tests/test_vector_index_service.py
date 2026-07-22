@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import get_settings
-from app.repositories.firestore import account_repository as account_repo
-from app.repositories.firestore import vector_repository
+from app.repositories.postgres import account_repository as account_repo
+from app.repositories.postgres import vector_repository
 from app.schemas.account import AuthenticatedUser
 from app.services import vector_index_service
 from app.services.account import uploaded_file_service
@@ -90,14 +90,14 @@ class VectorIndexServiceTests(unittest.TestCase):
         self.original_server_timestamp = account_repo.server_timestamp
         self.original_vector_library = vector_repository.vector_library
         self.original_embed_text = vector_index_service.embed_text
-        self.original_vector_store_collection = os.getenv("VECTOR_STORE_FIRESTORE_COLLECTION")
+        self.original_vector_store_collection = os.getenv("VECTOR_STORE_COLLECTION")
 
         account_repo.uploaded_files = lambda: self.fake_uploaded_files  # type: ignore[assignment]
         account_repo.file_extractions = lambda: self.fake_file_extractions  # type: ignore[assignment]
         account_repo.server_timestamp = lambda: self.fixed_time  # type: ignore[assignment]
         vector_repository.vector_library = lambda collection_name: self.fake_vectors  # type: ignore[assignment]
         vector_index_service.embed_text = lambda text, model: [0.9, 0.1]
-        os.environ["VECTOR_STORE_FIRESTORE_COLLECTION"] = "vectorLibraryRecords"
+        os.environ["VECTOR_STORE_COLLECTION"] = "vectorLibraryRecords"
         get_settings.cache_clear()
 
     def tearDown(self) -> None:
@@ -107,9 +107,9 @@ class VectorIndexServiceTests(unittest.TestCase):
         vector_repository.vector_library = self.original_vector_library  # type: ignore[assignment]
         vector_index_service.embed_text = self.original_embed_text
         if self.original_vector_store_collection is None:
-            os.environ.pop("VECTOR_STORE_FIRESTORE_COLLECTION", None)
+            os.environ.pop("VECTOR_STORE_COLLECTION", None)
         else:
-            os.environ["VECTOR_STORE_FIRESTORE_COLLECTION"] = self.original_vector_store_collection
+            os.environ["VECTOR_STORE_COLLECTION"] = self.original_vector_store_collection
         get_settings.cache_clear()
 
     def test_save_uploaded_file_auto_indexes_vector_record(self) -> None:

@@ -1,8 +1,8 @@
-# Firestore DB
+# Supabase PostgreSQL database
 
 ## Tổng quan
 
-Backend đang dùng `Firebase Admin SDK` để kết nối `Cloud Firestore`.
+Backend đang dùng `Supabase JWT/JWKS` để kết nối `Supabase PostgreSQL`.
 
 Mẫu thiết kế hiện tại là:
 
@@ -27,7 +27,7 @@ Lưu hồ sơ người dùng:
 
 ### `userSettings`
 
-Lưu cài đặt người dùng cấp tài khoản. Backend tự tạo document khi user gọi API settings, không cần tạo thủ công trong Firebase Console.
+Lưu cài đặt người dùng cấp tài khoản. Backend tự tạo document khi user gọi API settings, không cần tạo thủ công trong Supabase Console.
 
 Document id là `uid`.
 
@@ -268,7 +268,7 @@ Gần như service nào cũng:
 Thời gian server chủ yếu được ghi bằng:
 
 ```python
-firestore.SERVER_TIMESTAMP
+datetime.now(timezone.utc)
 ```
 
 ### 3. Cleanup theo giới hạn số lượng
@@ -282,6 +282,6 @@ Nhiều service có cleanup nội bộ:
 
 ## Những điểm nên nhớ
 
-- Firestore ở đây đóng vai trò application database chính.
+- PostgreSQL ở đây đóng vai trò application database chính.
 - Hiện chưa có ORM hay repository abstraction phức tạp; repository chủ yếu chỉ trả về collection ref.
 - Một số collection đang chứa nhiều shape dữ liệu khác nhau, nên tài liệu này cố ý ghi rõ để tránh hiểu nhầm khi bảo trì.

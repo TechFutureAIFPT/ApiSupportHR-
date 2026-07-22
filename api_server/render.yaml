@@ -13,10 +13,6 @@ services:
         value: 3.11.11
       - key: APP_NAME
         value: SupportHR Backend
-      - key: AUTH_PROVIDER
-        value: firebase
-      - key: DATA_PROVIDER
-        value: firestore
       - key: MAINTENANCE_MODE
         value: "false"
       - key: SUPABASE_URL
@@ -59,32 +55,6 @@ services:
         sync: false
       - key: GEMINI_API_KEY_2
         sync: false
-      - key: FIREBASE_PROJECT_ID
-        sync: false
-      - key: FIREBASE_CLIENT_EMAIL
-        sync: false
-      - key: FIREBASE_PRIVATE_KEY
-        sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_JSON
-        sync: false
-      - key: FIREBASE_WEB_API_KEY
-        sync: false
-      - key: FIREBASE_AUTH_DOMAIN
-        sync: false
-      - key: FIREBASE_DATABASE_URL
-        sync: false
-      - key: FIREBASE_STORAGE_BUCKET
-        sync: false
-      - key: FIREBASE_MESSAGING_SENDER_ID
-        sync: false
-      - key: FIREBASE_APP_ID
-        sync: false
-      - key: FIREBASE_MEASUREMENT_ID
-        sync: false
-      - key: FIREBASE_APPCHECK_SITE_KEY
-        sync: false
-      - key: FIREBASE_APPCHECK_ENFORCE
-        value: "true"
       - key: REDIS_URL
         fromService:
           name: supporthr-cache
@@ -107,11 +77,7 @@ services:
         value: ".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
       - key: ALLOWED_UPLOAD_MIME_TYPES
         value: application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg
-      - key: VECTOR_STORE_PROVIDER
-        value: auto
-      - key: VECTOR_STORE_JSON_DIR
-        sync: false
-      - key: VECTOR_STORE_FIRESTORE_COLLECTION
+      - key: VECTOR_STORE_COLLECTION
         value: vectorLibraryRecords
       - key: APPROVED_EXEMPLARS_COLLECTION
         value: approvedExemplars

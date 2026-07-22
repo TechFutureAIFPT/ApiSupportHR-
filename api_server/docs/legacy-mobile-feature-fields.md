@@ -1,4 +1,4 @@
-# Firebase fields cho Mobile features
+# Legacy source fields for Mobile features
 
 Tài liệu này dùng để tạo collection/field thủ công trong Firebase trước khi nối logic lưu dữ liệu.
 
