@@ -1,0 +1,146 @@
+name: Deploy backend to self-hosted VPS
+
+on:
+  workflow_run:
+    workflows: ["Build and publish backend image"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: "Optional full GHCR image reference; defaults to :main"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supporthr-production-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      ${{ vars.ENABLE_VPS_DEPLOY == 'true' &&
+          (github.event_name == 'workflow_dispatch' ||
+           (github.event.workflow_run.conclusion == 'success' &&
+            github.event.workflow_run.head_branch == 'main')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+
+    steps:
+      - name: Resolve source revision
+        id: revision
+        shell: bash
+        env:
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          MANUAL_IMAGE_REF: ${{ inputs.image_ref }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            source_sha="${WORKFLOW_RUN_SHA}"
+            image_ref="ghcr.io/techfutureaifpt/supporthr-backend:sha-${source_sha:0:12}"
+          else
+            source_sha="${GITHUB_SHA}"
+            image_ref="${MANUAL_IMAGE_REF:-ghcr.io/techfutureaifpt/supporthr-backend:main}"
+          fi
+
+          if [[ ! "${source_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid source SHA." >&2
+            exit 1
+          fi
+          if [[ ! "${image_ref}" =~ ^ghcr\.io/techfutureaifpt/supporthr-backend:[A-Za-z0-9._-]+$ ]]; then
+            echo "Image reference must use the SupportHR GHCR repository and a tag." >&2
+            exit 1
+          fi
+
+          echo "source_sha=${source_sha}" >> "${GITHUB_OUTPUT}"
+          echo "image_ref=${image_ref}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out the published revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.revision.outputs.source_sha }}
+
+      - name: Validate deployment secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${VPS_HOST:?Missing VPS_HOST production secret}"
+          : "${VPS_USER:?Missing VPS_USER production secret}"
+          : "${VPS_SSH_KEY:?Missing VPS_SSH_KEY production secret}"
+          : "${VPS_KNOWN_HOSTS:?Missing VPS_KNOWN_HOSTS production secret}"
+          if [[ ! "${VPS_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            echo "VPS_USER has an invalid format." >&2
+            exit 1
+          fi
+          if [[ ! "${VPS_HOST}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
+            echo "VPS_HOST must be an IPv4 address or DNS hostname." >&2
+            exit 1
+          fi
+          if [[ -n "${VPS_PORT}" ]]; then
+            if [[ ! "${VPS_PORT}" =~ ^[0-9]{1,5}$ ]]; then
+              echo "VPS_PORT must be numeric." >&2
+              exit 1
+            fi
+            port_number=$((10#${VPS_PORT}))
+            if ((port_number < 1 || port_number > 65535)); then
+              echo "VPS_PORT must be between 1 and 65535." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Configure verified SSH host key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -m 700 -d "${HOME}/.ssh"
+          printf '%s\n' "${VPS_SSH_KEY}" > "${HOME}/.ssh/id_ed25519"
+          chmod 600 "${HOME}/.ssh/id_ed25519"
+          printf '%s\n' "${VPS_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 600 "${HOME}/.ssh/known_hosts"
+
+      - name: Upload deployment bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          port="${VPS_PORT:-22}"
+          archive="/tmp/supporthr-deploy-${GITHUB_RUN_ID}.tar.gz"
+          tar -czf "${archive}" \
+            compose.production.yaml \
+            deploy/vps/Caddyfile \
+            deploy/vps/deploy.sh \
+            deploy/vps/rollback.sh \
+            deploy/vps/backup-redis.sh \
+            deploy/vps/health-watch.sh
+          scp -P "${port}" -i "${HOME}/.ssh/id_ed25519" \
+            "${archive}" "${VPS_USER}@${VPS_HOST}:/tmp/$(basename "${archive}")"
+
+      - name: Deploy immutable image and verify health
+        shell: bash
+        env:
+          IMAGE_REF: ${{ steps.revision.outputs.image_ref }}
+        run: |
+          set -Eeuo pipefail
+          port="${VPS_PORT:-22}"
+          remote_archive="/tmp/supporthr-deploy-${GITHUB_RUN_ID}.tar.gz"
+          ssh -p "${port}" -i "${HOME}/.ssh/id_ed25519" "${VPS_USER}@${VPS_HOST}" \
+            "IMAGE_REF='${IMAGE_REF}' REMOTE_ARCHIVE='${remote_archive}' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          install_root=/opt/supporthr/backend
+          shared_root=/opt/supporthr/shared
+          mkdir -p "${install_root}/deploy/vps" "${shared_root}"
+          tar -xzf "${REMOTE_ARCHIVE}" -C "${install_root}"
+          rm -f "${REMOTE_ARCHIVE}"
+          ln -sfn "${shared_root}/runtime.env" "${install_root}/deploy/vps/runtime.env"
+          chmod 750 "${install_root}/deploy/vps/"*.sh
+          cd "${install_root}"
+          SUPPORTHR_IMAGE_REF="${IMAGE_REF}" bash deploy/vps/deploy.sh
+          REMOTE

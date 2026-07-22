@@ -160,6 +160,7 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
 - GitHub Actions publishes AMD64/ARM64 images to GHCR; pin production to an immutable `sha-*` tag.
+- The gated VPS workflow deploys successful `main` images over verified-host SSH and runs the public health/rollback gate.
 - The old Render blueprint is legacy rollback configuration only and is not part of the primary runtime.
 - The self-trained CV classifier can stay local inside this API, or be deployed as a separate HTTP service and wired back through `LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL`.
 - Canonical offline training and exemplar ingestion live in `../ml_pipeline`; raw data and generated artifacts are not copied into the server image.

@@ -24,10 +24,12 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: techfutureaifpt/supporthr-backend
+  DOCKER_METADATA_SHORT_SHA_LENGTH: 12
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@v7

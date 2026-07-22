@@ -1,0 +1,10 @@
+[Unit]
+Description=SupportHR container health watchdog
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/supporthr/backend/deploy/vps/health-watch.sh
+
+[Service]
+Type=oneshot
+ExecStart=/opt/supporthr/backend/deploy/vps/health-watch.sh
+Nice=10

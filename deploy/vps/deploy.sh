@@ -24,7 +24,7 @@ read_env_value() {
   sed -n "s/^${key}=//p" "${env_file}" | tail -n 1 | tr -d '\r'
 }
 
-SUPPORTHR_IMAGE_REF="$(read_env_value SUPPORTHR_IMAGE_REF)"
+SUPPORTHR_IMAGE_REF="${SUPPORTHR_IMAGE_REF:-$(read_env_value SUPPORTHR_IMAGE_REF)}"
 API_DOMAIN="$(read_env_value API_DOMAIN)"
 ACME_EMAIL="$(read_env_value ACME_EMAIL)"
 
