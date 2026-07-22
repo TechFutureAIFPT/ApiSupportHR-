@@ -18,8 +18,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### Run with Docker
 
-Docker Compose runs the API, Redis and a separate analysis worker. Render remains compatible through
-`ANALYSIS_JOB_MODE=in_process`; the horizontally scaled path uses `ANALYSIS_JOB_MODE=redis`.
+Docker Compose runs the API, Redis and a separate analysis worker. The production path uses
+`ANALYSIS_JOB_MODE=redis`; `in_process` is retained only for local development compatibility.
 
 From the backend repo root (`Software/Web/BE`):
 
@@ -115,7 +115,7 @@ backend/
 ├─ docs/
 ├─ tests/
 ├─ .env.example
-├─ render.yaml
+├─ Dockerfile
 └─ requirements.txt
 ```
 
@@ -148,8 +148,9 @@ Async CV analysis:
 
 ### Deploy
 
-Kubernetes manifests and operating notes are under `../deploy/kubernetes`. The production overlay requires
-an immutable image tag, a real `supporthr-backend-secrets` Secret, managed Redis, Metrics Server and cluster-specific ingress/TLS.
+The primary free-VPS deployment is `../compose.production.yaml` with operating scripts under `../deploy/vps`.
+Kubernetes/K3s manifests and operating notes are under `../deploy/kubernetes`; `overlays/oci-free` is the
+single-node ARM64 target, while `overlays/production` remains the multi-node path.
 
 - Python version is pinned in `.python-version`
 - Start command:
@@ -158,6 +159,7 @@ an immutable image tag, a real `supporthr-backend-secrets` Secret, managed Redis
 uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
-- You can deploy directly from `render.yaml` or mirror the same settings in Render UI.
+- GitHub Actions publishes AMD64/ARM64 images to GHCR; pin production to an immutable `sha-*` tag.
+- The old Render blueprint is legacy rollback configuration only and is not part of the primary runtime.
 - The self-trained CV classifier can stay local inside this API, or be deployed as a separate HTTP service and wired back through `LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL`.
 - Canonical offline training and exemplar ingestion live in `../ml_pipeline`; raw data and generated artifacts are not copied into the server image.

@@ -17,11 +17,14 @@ From `Software/Web/BE`:
 docker build -t supporthr-backend:local ./api_server
 ```
 
-## Render and validate manifests without a cluster
+Pushes to `main` and `v*` tags also build AMD64/ARM64 images with provenance and SBOM metadata through `.github/workflows/container-image.yml` and publish them to `ghcr.io/techfutureaifpt/supporthr-backend`.
+
+## Generate and validate manifests without a cluster
 
 ```bash
 kubectl kustomize deploy/kubernetes/overlays/local
 kubectl kustomize deploy/kubernetes/overlays/production
+kubectl kustomize deploy/kubernetes/overlays/oci-free
 ```
 
 ## Local cluster
@@ -68,3 +71,33 @@ kubectl -n supporthr-production rollout status deployment/supporthr-worker
 ```
 
 For bursty analysis traffic, CPU/memory HPA is only the baseline. Add KEDA or another external-metrics adapter for Redis queue depth before high-volume production traffic.
+
+## OCI Free single-node K3s
+
+The `oci-free` overlay is sized for a single free ARM64 VM. It keeps one API pod, one worker and a persistent Redis StatefulSet, and intentionally removes HPA/PDB objects that do not improve availability on one node.
+
+1. Install K3s on Ubuntu and keep the bundled Traefik ingress controller.
+2. Install cert-manager, edit `clusterissuer.example.yaml`, then apply it.
+3. Copy `secret.env.example` outside Git, fill it, and create the runtime secret.
+4. Create the GHCR pull secret for the private image package.
+5. Replace `api.example.com` in `ingress.yaml` and change `newTag` to an immutable `sha-*` image tag.
+6. Apply the overlay and wait for the API and worker.
+
+```bash
+kubectl create namespace supporthr-oci --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n supporthr-oci create secret generic supporthr-backend-secrets --from-env-file=/secure/path/supporthr-secret.env
+kubectl -n supporthr-oci create secret docker-registry ghcr-pull --docker-server=ghcr.io --docker-username=YOUR_GITHUB_USER --docker-password="$GHCR_TOKEN"
+kubectl apply -f deploy/kubernetes/overlays/oci-free/clusterissuer.example.yaml
+kubectl apply -k deploy/kubernetes/overlays/oci-free
+kubectl -n supporthr-oci rollout status deployment/supporthr-api
+kubectl -n supporthr-oci rollout status deployment/supporthr-worker
+```
+
+Roll back an application release without changing Redis data:
+
+```bash
+kubectl -n supporthr-oci rollout undo deployment/supporthr-api
+kubectl -n supporthr-oci rollout undo deployment/supporthr-worker
+```
+
+K3s uses containerd to run the same OCI image produced by Docker Buildx; Docker Engine is not required on the K3s node after the image has been pushed to GHCR.

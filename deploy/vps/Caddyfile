@@ -1,0 +1,24 @@
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+
+	reverse_proxy backend:8000 {
+		health_uri /health/live
+		health_interval 30s
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -17,10 +17,12 @@ FROM python:3.11-slim AS runtime
 
 ARG APP_VERSION=dev
 ARG VCS_REF=unknown
+ARG SOURCE_URL=https://github.com/TechFutureAIFPT/backendsupporthr
 
 LABEL org.opencontainers.image.title="SupportHR Backend" \
       org.opencontainers.image.version="${APP_VERSION}" \
-      org.opencontainers.image.revision="${VCS_REF}"
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="${SOURCE_URL}"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

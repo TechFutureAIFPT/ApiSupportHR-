@@ -2,6 +2,12 @@
 .env.*
 .env.example
 !api_server/.env.example
+!deploy/vps/runtime.env.example
+deploy/vps/runtime.env
+deploy/vps/.current-image
+deploy/vps/.previous-image
+deploy/vps/backups/
+deploy/kubernetes/overlays/oci-free/secret.env
 admin/
 *.json
 
