@@ -15,7 +15,7 @@ fi
 
 admin_user="${SUPPORTHR_ADMIN_USER:-${SUDO_USER:-}}"
 ssh_port="${SSH_PORT:-22}"
-if [[ -z "${admin_user}" || "${admin_user}" == "root" ]] || ! id "${admin_user}" >/dev/null 2>&1; then
+if [[ -z "${admin_user}" || "${admin_user}" == "root" || ! "${admin_user}" =~ ^[a-z_][a-z0-9_-]*$ ]] || ! id "${admin_user}" >/dev/null 2>&1; then
   echo "Set SUPPORTHR_ADMIN_USER to the non-root SSH account." >&2
   exit 1
 fi
@@ -31,7 +31,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl gnupg ufw unattended-upgrades
+apt-get install -y ca-certificates curl fail2ban gnupg ufw unattended-upgrades
 
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
@@ -45,7 +45,19 @@ apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
 systemctl enable --now unattended-upgrades
+systemctl enable --now fail2ban
 usermod -aG docker "${admin_user}"
+
+cat > /etc/ssh/sshd_config.d/99-supporthr-hardening.conf <<EOF
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+MaxAuthTries 3
+AllowUsers ${admin_user}
+Port ${ssh_port}
+EOF
+sshd -t
+systemctl reload ssh
 
 install -d -m 0750 -o "${admin_user}" -g "${admin_user}" /opt/supporthr/backend
 install -d -m 0750 -o "${admin_user}" -g "${admin_user}" /opt/supporthr/shared

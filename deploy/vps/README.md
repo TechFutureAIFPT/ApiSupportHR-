@@ -2,9 +2,11 @@
 
 This is the primary single-server production path. It runs the API, durable worker, Redis and automatic HTTPS with Docker Compose. Supabase remains the external system of record.
 
+For the current OCI Console choices and exact Free Tier limits, follow [OCI-FREE-SETUP-VI.md](OCI-FREE-SETUP-VI.md).
+
 ## 1. Prepare the server
 
-Use an Ubuntu ARM64 or AMD64 VM with at least 2 vCPU and 8 GB RAM. Point the API domain A/AAAA record to the public IP, then allow inbound TCP 22, 80 and 443 plus UDP 443 in both the OCI VCN and the VM firewall.
+Use an Ubuntu ARM64 VM with 2 OCPU and 12 GB RAM for the current OCI A1 Free allowance. Point the API domain A/AAAA record to the public IP, then allow inbound TCP 22, 80 and 443 plus UDP 443 in both the OCI VCN and the VM firewall.
 
 From the local backend repository, copy the bootstrap bundle and run it on the new VM:
 
@@ -21,7 +23,7 @@ cp /tmp/supporthr-vps/runtime.env.example /opt/supporthr/shared/runtime.env
 chmod 600 /opt/supporthr/shared/runtime.env
 ```
 
-Fill every placeholder in `/opt/supporthr/shared/runtime.env`. Do not commit this file. The bootstrap installs Docker from Docker's official Ubuntu repository, enables unattended security updates, opens only SSH/HTTP/HTTPS and enables the SupportHR health watchdog.
+Fill every placeholder in `/opt/supporthr/shared/runtime.env`. Do not commit this file. The bootstrap installs Docker from Docker's official Ubuntu repository, disables password/root SSH login, enables Fail2ban and unattended security updates, opens only SSH/HTTP/HTTPS and enables the SupportHR health watchdog.
 
 ## 2. Deploy and update
 
