@@ -50,6 +50,8 @@ def get_ttl_seconds(kind: str) -> int:
         return settings.template_cache_ttl_seconds
     if kind == "sync_cache":
         return settings.sync_cache_ttl_seconds
+    if kind == "settings":
+        return settings.settings_cache_ttl_seconds
     if kind in ("chatbot", "feedback", "uploaded_files"):
         return 60
     return settings.account_cache_ttl_seconds
@@ -96,8 +98,18 @@ def get_or_build_cached_payload(
     cached = read_cached_payload(key)
     if cached is not None:
         return cached
-    payload = builder()
-    return write_cached_payload(key, kind, payload, revision=revision)
+    with redis_cache.distributed_lock(f"cache-fill:{key}", ttl_seconds=10, wait_timeout_seconds=0.25) as acquired:
+        # A concurrent request may have filled the key while this request waited.
+        cached = read_cached_payload(key)
+        if cached is not None:
+            return cached
+        payload = builder()
+        result = write_cached_payload(key, kind, payload, revision=revision)
+        if not acquired:
+            # Redis was busy beyond the short wait; returning fresh data is safer
+            # than extending request latency or serving an unbounded response.
+            result.cache_hit = False
+        return result
 
 
 def account_cache_key(prefix: str, uid: str, *parts: str) -> str:

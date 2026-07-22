@@ -72,6 +72,7 @@ def _persist_job_snapshot(record: JobRecord) -> None:
         repo.analysis_jobs().document(record["job_id"]).set(
             {
                 "jobId": record["job_id"],
+                "jobType": record.get("job_type", "analysis"),
                 "uid": record.get("owner_uid"),
                 "email": record.get("owner_email", ""),
                 "status": record.get("status"),
@@ -112,6 +113,7 @@ def _record_from_supabase(job_id: str) -> JobRecord | None:
         data = serialize(document.to_dict() or {})
         return {
             "job_id": str(data.get("jobId") or job_id),
+            "job_type": str(data.get("jobType") or "analysis"),
             "status": str(data.get("status") or "processing"),
             "progress": float(data.get("progress") or 0.0),
             "message": str(data.get("message") or ""),
@@ -249,6 +251,51 @@ async def run_analysis_job(
             _release_execution_slot(record)
 
 
+async def run_vector_rebuild_job(
+    job_id: str,
+    payload: dict[str, Any],
+    current_user: AuthenticatedUser,
+) -> None:
+    try:
+        _set_job(
+            job_id,
+            status="processing",
+            progress=0.1,
+            message="Rebuilding uploaded-file vector index.",
+        )
+        from app.services.vector_index_service import rebuild_uploaded_file_vector_index
+
+        result = await asyncio.to_thread(
+            rebuild_uploaded_file_vector_index,
+            current_user,
+            int(payload.get("limit_count") or 200),
+        )
+        _set_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="Vector index rebuild completed.",
+            result=result,
+            error=None,
+            payload=None,
+        )
+    except Exception as error:
+        _set_job(
+            job_id,
+            status="failed",
+            progress=1.0,
+            message="Vector index rebuild failed.",
+            result=None,
+            error=str(error),
+            traceback=traceback.format_exc(),
+            payload=None,
+        )
+    finally:
+        record = _load_job_record(job_id)
+        if record is not None:
+            _release_execution_slot(record)
+
+
 def start_analysis_job(payload: dict[str, Any], current_user: AuthenticatedUser | None = None) -> JobRecord:
     settings = get_settings()
     execution_mode = _resolve_execution_mode()
@@ -258,6 +305,7 @@ def start_analysis_job(payload: dict[str, Any], current_user: AuthenticatedUser 
     now = _now_iso()
     record: JobRecord = {
         "job_id": job_id,
+        "job_type": "analysis",
         "status": "queued" if execution_mode == "redis" else "processing",
         "progress": 0.0,
         "message": "Analysis job queued." if execution_mode == "redis" else "Analysis job accepted.",
@@ -294,6 +342,54 @@ def start_analysis_job(payload: dict[str, Any], current_user: AuthenticatedUser 
             )
     else:
         asyncio.create_task(run_analysis_job(job_id, copy.deepcopy(payload), current_user))
+    return _public_job(record)
+
+
+def start_vector_rebuild_job(current_user: AuthenticatedUser, *, limit_count: int = 200) -> JobRecord:
+    settings = get_settings()
+    execution_mode = _resolve_execution_mode()
+    job_id = uuid.uuid4().hex
+    _acquire_execution_slot(job_id, execution_mode, current_user)
+    payload = {"limit_count": min(max(1, int(limit_count)), 500)}
+    now = _now_iso()
+    record: JobRecord = {
+        "job_id": job_id,
+        "job_type": "vector_rebuild",
+        "status": "queued" if execution_mode == "redis" else "processing",
+        "progress": 0.0,
+        "message": "Vector rebuild queued." if execution_mode == "redis" else "Vector rebuild accepted.",
+        "result": None,
+        "error": None,
+        "owner_uid": current_user.uid,
+        "owner_email": current_user.email,
+        "source_texts": {},
+        "payload": copy.deepcopy(payload) if execution_mode == "redis" else None,
+        "execution_mode": execution_mode,
+        "created_at": now,
+        "updated_at": now,
+    }
+    redis_saved = _persist_job_record(record)
+    if execution_mode == "redis":
+        message_id = redis_cache.stream_add(
+            settings.analysis_job_queue_key,
+            {"job_id": job_id},
+            settings.analysis_job_stream_max_length,
+        )
+        if not redis_saved or not message_id:
+            _release_execution_slot(record)
+            _set_job(
+                job_id,
+                status="failed",
+                progress=1.0,
+                message="Vector rebuild queue is unavailable.",
+                error="Unable to persist or enqueue the vector rebuild job.",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Unable to enqueue vector rebuild job.",
+            )
+    else:
+        asyncio.create_task(run_vector_rebuild_job(job_id, payload, current_user))
     return _public_job(record)
 
 
@@ -386,7 +482,14 @@ async def execute_queued_analysis_job(job_id: str) -> bool:
             uid=str(record["owner_uid"]),
             email=str(record.get("owner_email") or ""),
         )
-    await run_analysis_job(job_id, payload, current_user)
+    if record.get("job_type") == "vector_rebuild":
+        if current_user is None:
+            _set_job(job_id, status="failed", progress=1.0, message="Vector index rebuild failed.", error="Owner is missing.")
+            _release_execution_slot(record)
+            return False
+        await run_vector_rebuild_job(job_id, payload, current_user)
+    else:
+        await run_analysis_job(job_id, payload, current_user)
     return True
 
 

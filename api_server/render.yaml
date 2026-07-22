@@ -63,8 +63,20 @@ services:
         fromService:
           name: supporthr-cache
           property: connectionString
+      - key: ANALYSIS_JOB_MODE
+        value: redis
+      - key: POSTGRES_POOL_MAX_SIZE
+        value: "15"
+      - key: POSTGRES_POOL_MAX_WAITING
+        value: "60"
+      - key: POSTGRES_POOL_TIMEOUT_SECONDS
+        value: "5"
+      - key: REDIS_MAX_CONNECTIONS
+        value: "50"
       - key: ACCOUNT_CACHE_TTL_SECONDS
         value: "120"
+      - key: SETTINGS_CACHE_TTL_SECONDS
+        value: "600"
       - key: MOBILE_INBOX_CACHE_TTL_SECONDS
         value: "60"
       - key: TEMPLATE_CACHE_TTL_SECONDS
@@ -99,6 +111,47 @@ services:
         value: "0.75"
       - key: RAG_MAX_EXEMPLARS
         value: "2"
+      - key: GZIP_MINIMUM_SIZE
+        value: "1024"
+      - key: GZIP_COMPRESS_LEVEL
+        value: "5"
+  - type: worker
+    name: supporthr-analysis-worker
+    runtime: python
+    plan: starter
+    numInstances: 1
+    rootDir: api_server
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.workers.analysis_worker
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: DATABASE_URL
+        sync: false
+      - key: DATA_ENCRYPTION_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: GEMINI_CV_ANALYSIS_MODEL
+        value: gemini-3.6-flash
+      - key: GEMINI_API_KEY_1
+        sync: false
+      - key: GEMINI_API_KEY_2
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: supporthr-cache
+          property: connectionString
+      - key: REDIS_INTERNAL_URL
+        fromService:
+          name: supporthr-cache
+          property: connectionString
+      - key: ANALYSIS_JOB_MODE
+        value: redis
+      - key: POSTGRES_POOL_MAX_SIZE
+        value: "10"
+      - key: REDIS_MAX_CONNECTIONS
+        value: "30"
   - type: keyvalue
     name: supporthr-cache
     plan: starter

@@ -24,7 +24,12 @@ def cleanup_uploaded_files(user: AuthenticatedUser, keep_count: int = MAX_FILES_
     fast_cleanup(repo.uploaded_files(), user.uid, keep_count, timestamp_field="uploadedAt")
 
 
-def save_uploaded_file(user: AuthenticatedUser, payload: dict[str, object]) -> str:
+def save_uploaded_file(
+    user: AuthenticatedUser,
+    payload: dict[str, object],
+    *,
+    maintain_collection: bool = True,
+) -> str:
     file_name = str(payload.get("fileName") or "")
     extension = file_name.split(".")[-1].lower() if "." in file_name else ""
     extracted_text = str(payload.get("extractedText") or "")
@@ -58,13 +63,21 @@ def save_uploaded_file(user: AuthenticatedUser, payload: dict[str, object]) -> s
         extracted_text=extracted_text,
     )
     vector_index_service.try_sync_uploaded_file_to_vector_store(user, doc_ref.id, stored_payload)
-    cleanup_uploaded_files(user, MAX_FILES_PER_USER)
-    _invalidate_uploaded_files_cache(user.uid)
+    if maintain_collection:
+        cleanup_uploaded_files(user, MAX_FILES_PER_USER)
+        _invalidate_uploaded_files_cache(user.uid)
     return doc_ref.id
 
 
 def save_uploaded_files(user: AuthenticatedUser, files: list[dict[str, object]]) -> list[str]:
-    return [save_uploaded_file(user, file_payload) for file_payload in files]
+    ids = [
+        save_uploaded_file(user, file_payload, maintain_collection=False)
+        for file_payload in files
+    ]
+    if ids:
+        cleanup_uploaded_files(user, MAX_FILES_PER_USER)
+        _invalidate_uploaded_files_cache(user.uid)
+    return ids
 
 
 def _query_uploaded_files(
@@ -111,8 +124,8 @@ def get_user_files_by_type(user: AuthenticatedUser, file_type: str, limit_count:
     return [{"id": doc.id, **serialize(doc.to_dict())} for doc in docs]
 
 
-def get_files_by_session(user: AuthenticatedUser, session_id: str) -> list[dict[str, object]]:
-    docs = _query_uploaded_files(user, session_id=session_id)
+def get_files_by_session(user: AuthenticatedUser, session_id: str, limit_count: int = 200) -> list[dict[str, object]]:
+    docs = _query_uploaded_files(user, session_id=session_id, limit_count=limit_count)
     return [{"id": doc.id, **serialize(doc.to_dict())} for doc in docs]
 
 
@@ -142,9 +155,10 @@ def touch_file(user: AuthenticatedUser, file_id: str) -> bool:
 
 def get_file_stats(user: AuthenticatedUser) -> dict[str, object]:
     base_query = repo.uploaded_files().where("uid", "==", user.uid)
-    total_files = int(base_query.count().get()[0][0].value)
-    total_cvs = int(base_query.where("fileType", "==", "cv").count().get()[0][0].value)
-    total_jds = int(base_query.where("fileType", "==", "jd").count().get()[0][0].value)
+    grouped = base_query.group_count("fileType")
+    total_files = sum(grouped.values())
+    total_cvs = int(grouped.get("cv", 0))
+    total_jds = int(grouped.get("jd", 0))
     total_size = int(base_query.sum("fileSize").get()[0][0].value or 0)
     return {
         "totalFiles": total_files,

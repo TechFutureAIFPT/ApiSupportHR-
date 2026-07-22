@@ -32,6 +32,7 @@ class FakeDocumentReference:
         self.id = doc_id
 
     def get(self) -> FakeDocumentSnapshot:
+        self._collection.get_count += 1
         return FakeDocumentSnapshot(self._collection, self.id)
 
     def set(self, payload: dict[str, Any], merge: bool = False) -> None:
@@ -43,6 +44,7 @@ class FakeDocumentReference:
 class FakeCollection:
     def __init__(self) -> None:
         self.store: dict[str, dict[str, Any]] = {}
+        self.get_count = 0
 
     def document(self, doc_id: str) -> FakeDocumentReference:
         return FakeDocumentReference(self, doc_id)
@@ -115,6 +117,30 @@ class SettingsApiTests(unittest.TestCase):
         stored = self.fake_user_settings.store["user-123"]
         self.assertEqual(stored["uid"], "user-123")
         self.assertEqual(stored["settings"]["ui"]["theme"], "light")
+        self.assertEqual(self.fake_user_settings.get_count, 1, "PATCH must not read the same row twice")
+
+    def test_settings_etag_rejects_stale_cross_device_write(self) -> None:
+        initial = self.client.get("/api/account/settings")
+        initial_etag = initial.headers.get("etag")
+        self.assertTrue(initial_etag)
+
+        unchanged = self.client.get("/api/account/settings", headers={"If-None-Match": initial_etag or ""})
+        self.assertEqual(unchanged.status_code, 304)
+
+        first_update = self.client.patch(
+            "/api/account/settings",
+            headers={"If-Match": initial_etag or ""},
+            json={"workflow": {"autoSaveDraft": False}},
+        )
+        self.assertEqual(first_update.status_code, 200, first_update.text)
+        self.assertNotEqual(first_update.headers.get("etag"), initial_etag)
+
+        stale_update = self.client.patch(
+            "/api/account/settings",
+            headers={"If-Match": initial_etag or ""},
+            json={"workflow": {"autoSaveHistory": False}},
+        )
+        self.assertEqual(stale_update.status_code, 412, stale_update.text)
 
     def test_patch_settings_persists_fixed_jd_workflow_config(self) -> None:
         response = self.client.patch(

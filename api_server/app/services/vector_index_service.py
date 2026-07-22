@@ -292,8 +292,22 @@ def reindex_uploaded_file(user: AuthenticatedUser, file_id: str) -> dict[str, An
 
 
 def rebuild_uploaded_file_vector_index(user: AuthenticatedUser, limit_count: int = 500) -> dict[str, Any]:
-    docs = list(account_repo.uploaded_files().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "uploadedAt")[:limit_count]
+    try:
+        query = (
+            account_repo.uploaded_files()
+            .where("uid", "==", user.uid)
+            .order_by("uploadedAt", direction="DESCENDING")
+            .limit(limit_count)
+        )
+        ordered = list(query.stream())
+    except Exception:
+        base_query = account_repo.uploaded_files().where("uid", "==", user.uid)
+        try:
+            base_query = base_query.limit(limit_count)
+        except (AttributeError, TypeError):
+            pass
+        docs = list(base_query.stream())
+        ordered = sorted_docs(docs, "uploadedAt")[:limit_count]
 
     indexed = 0
     skipped = 0

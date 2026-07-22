@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.integrations.postgres import get_postgres_pool
 from app.repositories.postgres.document_store import PostgresDocumentDatabase
 
 
@@ -126,3 +127,31 @@ def get_document(collection_ref, document_id: str):
 
 def set_document(collection_ref, document_id: str, payload: dict[str, Any], merge: bool = False):
     collection_ref.document(document_id).set(payload, merge=merge)
+
+
+def get_sync_stats(owner_id: str) -> dict[str, Any]:
+    """Return all account sync counters and the latest timestamp in one query."""
+    with get_postgres_pool().connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                  (select count(*) from public.synced_analysis_cache where owner_id = %s::uuid),
+                  (select count(*) from public.synced_analysis_history where owner_id = %s::uuid),
+                  (select count(*) from public.analysis_feedback where owner_id = %s::uuid),
+                  (select coalesce(source_updated_at, updated_at)
+                   from public.synced_analysis_history
+                   where owner_id = %s::uuid
+                   order by coalesce(source_updated_at, updated_at) desc, id desc
+                   limit 1)
+                """,
+                (owner_id, owner_id, owner_id, owner_id),
+            )
+            row = cursor.fetchone() or (0, 0, 0, None)
+    latest = row[3]
+    return {
+        "cacheEntries": int(row[0] or 0),
+        "historyEntries": int(row[1] or 0),
+        "feedbackEntries": int(row[2] or 0),
+        "lastSyncTime": int(latest.timestamp() * 1000) if isinstance(latest, datetime) else None,
+    }

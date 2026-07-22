@@ -167,8 +167,13 @@ def clear_user_cache(user: AuthenticatedUser) -> None:
         docs = list(repo.synced_cache().where("uid", "==", user.uid).limit(100).stream())
         if not docs:
             break
-        for doc in docs:
-            doc.reference.delete()
+        collection_ref = repo.synced_cache()
+        delete_many = getattr(collection_ref, "delete_many", None)
+        if callable(delete_many):
+            delete_many(doc.id for doc in docs)
+        else:
+            for doc in docs:
+                doc.reference.delete()
     view_sync_service.refresh_user_views(user, "cache", rebuild_mobile_inbox=False)
 
 

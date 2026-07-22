@@ -4,6 +4,7 @@ import asyncio
 import copy
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
@@ -112,6 +113,26 @@ class AnalysisJobQueueTests(unittest.TestCase):
         self.assertEqual(current["status"], "completed")
         self.assertIsNone(current["payload"])
         self.assertEqual(current["result"]["candidates"][0]["candidateName"], "A")
+        self.assertEqual(self.released[-1][1], job["job_id"])
+
+    def test_vector_rebuild_uses_same_durable_queue_and_worker_status(self) -> None:
+        user = AuthenticatedUser(uid="user-vector", email="hr@example.com")
+        job = jobs.start_vector_rebuild_job(user, limit_count=25)
+        cached = self.redis_store[f"supporthr:analysis:job:{job['job_id']}"]
+        self.assertEqual(cached["job_type"], "vector_rebuild")
+        self.assertEqual(cached["payload"], {"limit_count": 25})
+        jobs._jobs.clear()
+
+        with patch(
+            "app.services.vector_index_service.rebuild_uploaded_file_vector_index",
+            return_value={"processed": 2, "indexed": 2, "skipped": 0, "failed": 0, "entries": []},
+        ):
+            completed = asyncio.run(jobs.execute_queued_analysis_job(str(job["job_id"])))
+
+        self.assertTrue(completed)
+        current = self.redis_store[f"supporthr:analysis:job:{job['job_id']}"]
+        self.assertEqual(current["status"], "completed")
+        self.assertEqual(current["result"]["indexed"], 2)
         self.assertEqual(self.released[-1][1], job["job_id"])
 
     def test_required_redis_mode_rejects_when_queue_is_down(self) -> None:

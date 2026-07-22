@@ -182,7 +182,7 @@ def _normalize_feedback_payload(
     }
 
 
-def save_feedback(user: AuthenticatedUser, payload: dict[str, Any]) -> str:
+def save_feedback_record(user: AuthenticatedUser, payload: dict[str, Any]) -> dict[str, Any]:
     doc_id = _feedback_doc_id(user, payload)
     doc_ref = repo.analysis_feedback().document(doc_id)
     snapshot = doc_ref.get()
@@ -191,7 +191,11 @@ def save_feedback(user: AuthenticatedUser, payload: dict[str, Any]) -> str:
     doc_ref.set(normalized, merge=True)
     view_sync_service.refresh_user_views(user, "feedback", rebuild_mobile_inbox=True)
     _invalidate_feedback_cache(user.uid)
-    return doc_id
+    return {**serialize(normalized), "id": doc_id}
+
+
+def save_feedback(user: AuthenticatedUser, payload: dict[str, Any]) -> str:
+    return str(save_feedback_record(user, payload)["id"])
 
 
 def _build_feedback_query(
@@ -278,12 +282,21 @@ def get_feedback_stats(
     base_query = _build_feedback_query(
         user, session_id=session_id, history_id=history_id, sync_history_id=sync_history_id,
     )
-    total = int(base_query.count().get()[0][0].value)
-    actions_count: dict[str, int] = {}
-    for action in ALL_KNOWN_ACTIONS:
-        count = int(base_query.where("action", "==", action).count().get()[0][0].value)
-        if count > 0:
-            actions_count[action] = count
+    try:
+        grouped = base_query.group_count("action")
+        actions_count = {
+            action: int(grouped.get(action, 0))
+            for action in ALL_KNOWN_ACTIONS
+            if int(grouped.get(action, 0)) > 0
+        }
+        total = sum(int(value) for value in grouped.values())
+    except Exception:
+        total = int(base_query.count().get()[0][0].value)
+        actions_count = {}
+        for action in ALL_KNOWN_ACTIONS:
+            count = int(base_query.where("action", "==", action).count().get()[0][0].value)
+            if count > 0:
+                actions_count[action] = count
     positive_count = sum(actions_count.get(action, 0) for action in POSITIVE_ACTIONS)
     negative_count = sum(actions_count.get(action, 0) for action in NEGATIVE_ACTIONS)
 

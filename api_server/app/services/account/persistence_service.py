@@ -6,7 +6,7 @@ from typing import Any
 
 from app.repositories.postgres import account_repository as repo
 from app.schemas.account import AuthenticatedUser
-from app.services.account.shared import sorted_docs
+from app.services.account.shared import optimized_docs
 
 
 MAX_ARTIFACTS_PER_USER = 200
@@ -32,10 +32,14 @@ def _base_payload(user: AuthenticatedUser, artifact_type: str) -> dict[str, Any]
 
 def _cleanup(collection_ref: Any, user: AuthenticatedUser, keep_count: int = MAX_ARTIFACTS_PER_USER) -> None:
     try:
-        docs = list(collection_ref.where("uid", "==", user.uid).stream())
-        ordered = sorted_docs(docs, "timestamp")
-        for doc in ordered[keep_count:]:
-            doc.reference.delete()
+        docs = optimized_docs(collection_ref, user.uid, keep_count + 50)
+        stale_ids = [doc.id for doc in docs[keep_count:]]
+        delete_many = getattr(collection_ref, "delete_many", None)
+        if callable(delete_many):
+            delete_many(stale_ids)
+        else:
+            for document_id in stale_ids:
+                collection_ref.document(document_id).delete()
     except Exception as error:  # pragma: no cover - Supabase availability depends on runtime config
         print(f"[Persistence] Cleanup skipped: {error}")
 

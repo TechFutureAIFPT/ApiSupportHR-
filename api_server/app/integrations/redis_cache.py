@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any
 
@@ -28,10 +30,22 @@ def get_redis_client() -> Any:
     return Redis.from_url(
         settings.redis_connection_url,
         decode_responses=True,
-        socket_connect_timeout=2,
-        socket_timeout=3,
+        max_connections=settings.redis_max_connections,
+        socket_connect_timeout=max(0.1, settings.redis_connect_timeout_seconds),
+        socket_timeout=max(0.1, settings.redis_socket_timeout_seconds),
+        socket_keepalive=True,
+        retry_on_timeout=True,
         health_check_interval=30,
     )
+
+
+def close_redis_client() -> None:
+    if not get_redis_client.cache_info().currsize:
+        return
+    client = get_redis_client()
+    if client is not None:
+        client.close()
+    get_redis_client.cache_clear()
 
 
 def ping() -> bool:
@@ -88,11 +102,59 @@ def delete_prefix(prefix: str) -> int:
         return 0
     deleted = 0
     try:
-        for key in client.scan_iter(match=f"{prefix}*"):
-            deleted += int(client.delete(key) or 0)
+        batch: list[str] = []
+        for key in client.scan_iter(match=f"{prefix}*", count=200):
+            batch.append(key)
+            if len(batch) >= 200:
+                deleted += int(client.unlink(*batch) or 0)
+                batch.clear()
+        if batch:
+            deleted += int(client.unlink(*batch) or 0)
     except RedisError:
         return deleted
     return deleted
+
+
+@contextmanager
+def distributed_lock(
+    key: str,
+    *,
+    ttl_seconds: int = 10,
+    wait_timeout_seconds: float = 1.5,
+):
+    """Short owner-safe Redis lock; degrades to an acquired lock without Redis."""
+    client = get_redis_client()
+    if client is None:
+        yield True
+        return
+
+    token = uuid.uuid4().hex
+    deadline = time.monotonic() + max(0.0, wait_timeout_seconds)
+    acquired = False
+    try:
+        while time.monotonic() <= deadline:
+            try:
+                acquired = bool(client.set(key, token, nx=True, ex=max(1, ttl_seconds)))
+            except RedisError:
+                # Cache/locking must never make the database unavailable.
+                yield True
+                return
+            if acquired:
+                break
+            time.sleep(0.02)
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                client.eval(
+                    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                    "return redis.call('del', KEYS[1]) else return 0 end",
+                    1,
+                    key,
+                    token,
+                )
+            except RedisError:
+                pass
 
 
 def acquire_lock(key: str, ttl_seconds: int) -> bool:

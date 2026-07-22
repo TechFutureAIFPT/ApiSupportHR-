@@ -69,18 +69,20 @@ def get_synced_history(user: AuthenticatedUser, limit_count: int = 20) -> list[d
 
 
 def get_sync_stats(user: AuthenticatedUser) -> dict[str, Any]:
-    cache_count = repo.synced_cache().where("uid", "==", user.uid).count().get()[0][0].value
-    history_count = repo.synced_history().where("uid", "==", user.uid).count().get()[0][0].value
-    feedback_count = repo.analysis_feedback().where("uid", "==", user.uid).count().get()[0][0].value
-
-    last_docs = optimized_docs(repo.synced_history(), user.uid, 1)
-    last_sync_time = serialize(last_docs[0].to_dict().get("timestamp")) if last_docs else None
-    return {
-        "cacheEntries": int(cache_count),
-        "historyEntries": int(history_count),
-        "feedbackEntries": int(feedback_count),
-        "lastSyncTime": last_sync_time,
-    }
+    try:
+        return repo.get_sync_stats(user.uid)
+    except Exception:
+        cache_count = repo.synced_cache().where("uid", "==", user.uid).count().get()[0][0].value
+        history_count = repo.synced_history().where("uid", "==", user.uid).count().get()[0][0].value
+        feedback_count = repo.analysis_feedback().where("uid", "==", user.uid).count().get()[0][0].value
+        last_docs = optimized_docs(repo.synced_history(), user.uid, 1)
+        last_sync_time = serialize(last_docs[0].to_dict().get("timestamp")) if last_docs else None
+        return {
+            "cacheEntries": int(cache_count),
+            "historyEntries": int(history_count),
+            "feedbackEntries": int(feedback_count),
+            "lastSyncTime": last_sync_time,
+        }
 
 
 def _score_number(value: Any, fallback: float = 0) -> float:
@@ -771,8 +773,12 @@ def save_manual_history_snapshot(user: AuthenticatedUser, payload: dict[str, Any
     return doc_id
 
 
-def fetch_manual_history(user: AuthenticatedUser, user_email: str | None = None) -> list[dict[str, Any]]:
-    docs = list(repo.manual_history().where("uid", "==", user.uid).stream())
+def fetch_manual_history(
+    user: AuthenticatedUser,
+    user_email: str | None = None,
+    limit_count: int = 20,
+) -> list[dict[str, Any]]:
+    docs = optimized_docs(repo.manual_history(), user.uid, limit_count, timestamp_field="updatedAt")
     items = []
     for doc in docs:
         data = doc.to_dict() or {}
@@ -792,4 +798,4 @@ def fetch_manual_history(user: AuthenticatedUser, user_email: str | None = None)
                 "userEmail": str(data.get("email") or ""),
             }
         )
-    return sorted(items, key=lambda item: item["timestamp"], reverse=True)
+    return sorted(items, key=lambda item: item["timestamp"], reverse=True)[:limit_count]

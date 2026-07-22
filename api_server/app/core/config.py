@@ -32,9 +32,32 @@ class Settings:
             except (TypeError, ValueError):
                 return default
 
+        def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+            try:
+                value = int(os.getenv(name, str(default)))
+            except (TypeError, ValueError):
+                value = default
+            return max(minimum, min(maximum, value))
+
         self.app_name = os.getenv("APP_NAME", "SupportHR Backend")
         self.maintenance_mode = os.getenv("MAINTENANCE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
         self.database_url = os.getenv("DATABASE_URL", "").strip()
+        # This service uses psycopg directly rather than SQLAlchemy. These are the
+        # equivalent bounded-pool controls for every API/worker process.
+        self.postgres_pool_min_size = _int_env("POSTGRES_POOL_MIN_SIZE", 1, 0, 20)
+        self.postgres_pool_max_size = _int_env("POSTGRES_POOL_MAX_SIZE", 15, 1, 100)
+        if self.postgres_pool_min_size > self.postgres_pool_max_size:
+            self.postgres_pool_min_size = self.postgres_pool_max_size
+        self.postgres_pool_max_waiting = _int_env("POSTGRES_POOL_MAX_WAITING", 60, 1, 10000)
+        self.postgres_pool_timeout_seconds = _float_env("POSTGRES_POOL_TIMEOUT_SECONDS", 5.0)
+        self.postgres_pool_max_idle_seconds = _float_env("POSTGRES_POOL_MAX_IDLE_SECONDS", 300.0)
+        self.postgres_pool_max_lifetime_seconds = _float_env("POSTGRES_POOL_MAX_LIFETIME_SECONDS", 1800.0)
+        self.postgres_pool_reconnect_timeout_seconds = _float_env("POSTGRES_POOL_RECONNECT_TIMEOUT_SECONDS", 60.0)
+        self.postgres_pool_workers = _int_env("POSTGRES_POOL_WORKERS", 3, 1, 10)
+        self.postgres_statement_timeout_ms = _int_env("POSTGRES_STATEMENT_TIMEOUT_MS", 15000, 1000, 120000)
+        self.postgres_idle_transaction_timeout_ms = _int_env(
+            "POSTGRES_IDLE_TRANSACTION_TIMEOUT_MS", 10000, 1000, 120000
+        )
         self.supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
         self.supabase_jwt_audience = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated").strip() or "authenticated"
         self.supabase_jwt_issuer = (
@@ -116,6 +139,9 @@ class Settings:
         }
         self.redis_url = os.getenv("REDIS_URL", "").strip()
         self.redis_internal_url = os.getenv("REDIS_INTERNAL_URL", "").strip()
+        self.redis_max_connections = _int_env("REDIS_MAX_CONNECTIONS", 50, 1, 1000)
+        self.redis_connect_timeout_seconds = _float_env("REDIS_CONNECT_TIMEOUT_SECONDS", 1.0)
+        self.redis_socket_timeout_seconds = _float_env("REDIS_SOCKET_TIMEOUT_SECONDS", 2.0)
         raw_analysis_job_mode = os.getenv("ANALYSIS_JOB_MODE", "in_process").strip().lower()
         if raw_analysis_job_mode not in {"in_process", "redis", "auto"}:
             raw_analysis_job_mode = "in_process"
@@ -149,10 +175,15 @@ class Settings:
             int(os.getenv("ANALYSIS_JOB_MAX_CONCURRENCY_PER_USER", "3")),
         )
         self.account_cache_ttl_seconds = max(15, int(os.getenv("ACCOUNT_CACHE_TTL_SECONDS", "120")))
+        self.settings_cache_ttl_seconds = max(30, int(os.getenv("SETTINGS_CACHE_TTL_SECONDS", "600")))
         self.mobile_inbox_cache_ttl_seconds = max(15, int(os.getenv("MOBILE_INBOX_CACHE_TTL_SECONDS", "60")))
         self.template_cache_ttl_seconds = max(30, int(os.getenv("TEMPLATE_CACHE_TTL_SECONDS", "300")))
         self.sync_cache_ttl_seconds = max(30, int(os.getenv("SYNC_CACHE_TTL_SECONDS", "300")))
         self.upload_file_size_limit_mb = max(1, int(os.getenv("UPLOAD_FILE_SIZE_LIMIT_MB", "15")))
+        self.default_page_size = _int_env("DEFAULT_PAGE_SIZE", 50, 1, 200)
+        self.max_page_size = _int_env("MAX_PAGE_SIZE", 200, 10, 500)
+        self.gzip_minimum_size = _int_env("GZIP_MINIMUM_SIZE", 1024, 256, 1048576)
+        self.gzip_compress_level = _int_env("GZIP_COMPRESS_LEVEL", 5, 1, 9)
         self.allowed_upload_extensions = [
             value.strip().lower()
             for value in os.getenv("ALLOWED_UPLOAD_EXTENSIONS", ".pdf,.docx,.txt,.csv,.png,.jpg,.jpeg,.webp").split(",")

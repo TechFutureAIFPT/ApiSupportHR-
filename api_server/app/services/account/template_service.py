@@ -8,9 +8,17 @@ from app.services.account import view_sync_service
 from app.services.account.shared import serialize, sorted_docs
 
 
-def get_user_templates(user: AuthenticatedUser) -> list[dict[str, Any]]:
-    docs = list(repo.jd_templates().where("uid", "==", user.uid).stream())
-    ordered = sorted_docs(docs, "updatedAt")
+def get_user_templates(user: AuthenticatedUser, limit_count: int = 100) -> list[dict[str, Any]]:
+    try:
+        ordered = list(
+            repo.jd_templates().where("uid", "==", user.uid)
+            .order_by("updatedAt", direction="DESCENDING")
+            .limit(min(max(1, limit_count * 2), 400))
+            .stream()
+        )
+    except Exception:
+        docs = list(repo.jd_templates().where("uid", "==", user.uid).limit(min(limit_count * 2, 400)).stream())
+        ordered = sorted_docs(docs, "updatedAt")
     unique = []
     seen_names: set[str] = set()
     for doc in ordered:
@@ -20,13 +28,14 @@ def get_user_templates(user: AuthenticatedUser) -> list[dict[str, Any]]:
             continue
         seen_names.add(name)
         unique.append({"id": doc.id, **serialize(data)})
+        if len(unique) >= limit_count:
+            break
     return unique
 
 
 def create_template(user: AuthenticatedUser, payload: dict[str, Any]) -> dict[str, Any]:
     doc_ref = repo.create_document(repo.jd_templates())
-    doc_ref.set(
-        {
+    stored_payload = {
             "uid": user.uid,
             "name": str(payload.get("name") or ""),
             "category": str(payload.get("category") or ""),
@@ -36,10 +45,9 @@ def create_template(user: AuthenticatedUser, payload: dict[str, Any]) -> dict[st
             "createdAt": repo.server_timestamp(),
             "updatedAt": repo.server_timestamp(),
         }
-    )
-    snapshot = doc_ref.get()
+    doc_ref.set(stored_payload)
     view_sync_service.refresh_user_views(user, "template", rebuild_mobile_inbox=False)
-    return {"id": doc_ref.id, **serialize(snapshot.to_dict() or {})}
+    return {"id": doc_ref.id, **serialize(stored_payload)}
 
 
 def update_template(user: AuthenticatedUser, template_id: str, updates: dict[str, Any]) -> bool:

@@ -16,19 +16,33 @@ def cleanup_profile_cv_history(user: AuthenticatedUser, keep_count: int = MAX_HI
     excess = docs[keep_count:]
     if not excess:
         return
+    stale_ids: list[str] = []
     for doc in excess:
         data = doc.to_dict() or {}
         if "jdText" not in data and "jdTitle" not in data:
             continue
-        doc.reference.delete()
+        stale_ids.append(doc.id)
+    collection_ref = repo.cv_history()
+    delete_many = getattr(collection_ref, "delete_many", None)
+    if callable(delete_many):
+        delete_many(stale_ids)
+    else:
+        for document_id in stale_ids:
+            collection_ref.document(document_id).delete()
     if len(docs) == scan_limit:
         keep_ids = {doc.id for doc in docs[:keep_count]}
-        for doc in repo.cv_history().where("uid", "==", user.uid).stream():
+        stale_ids = []
+        for doc in collection_ref.where("uid", "==", user.uid).stream():
             if doc.id not in keep_ids:
                 data = doc.to_dict() or {}
                 if "jdText" not in data and "jdTitle" not in data:
                     continue
-                doc.reference.delete()
+                stale_ids.append(doc.id)
+        if callable(delete_many):
+            delete_many(stale_ids)
+        else:
+            for document_id in stale_ids:
+                collection_ref.document(document_id).delete()
 
 
 def upsert_user_profile(

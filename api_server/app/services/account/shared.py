@@ -61,11 +61,22 @@ def fast_cleanup(collection_ref: Any, uid: str, keep_count: int, timestamp_field
     excess = docs[keep_count:]
     if not excess:
         return
-    for doc in excess:
-        doc.reference.delete()
+    delete_many = getattr(collection_ref, "delete_many", None)
+    if callable(delete_many):
+        delete_many(doc.id for doc in excess)
+    else:
+        for doc in excess:
+            doc.reference.delete()
     # If we hit the scan ceiling, there may be more — sweep only what's unknown
     if len(docs) == scan_limit:
         keep_ids = {doc.id for doc in docs[:keep_count]}
-        for doc in collection_ref.where("uid", "==", uid).stream():
-            if doc.id not in keep_ids:
-                doc.reference.delete()
+        stale_ids = [
+            doc.id
+            for doc in collection_ref.where("uid", "==", uid).stream()
+            if doc.id not in keep_ids
+        ]
+        if callable(delete_many):
+            delete_many(stale_ids)
+        else:
+            for document_id in stale_ids:
+                collection_ref.document(document_id).delete()

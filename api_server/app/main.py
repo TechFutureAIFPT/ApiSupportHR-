@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -52,7 +54,13 @@ def verify_runtime_artifacts() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     verify_runtime_artifacts()
-    yield
+    try:
+        yield
+    finally:
+        from app.integrations.postgres import close_postgres_pool
+
+        close_postgres_pool()
+        redis_cache.close_redis_client()
 
 
 api_app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -67,7 +75,8 @@ async def audit_and_guard_requests(request: Request, call_next):
     try:
         if settings.maintenance_mode and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
             raise HTTPException(status_code=503, detail="SupportHR is temporarily read-only for data migration.")
-        apply_request_rate_limits(request)
+        # redis-py is synchronous; keep its network I/O off the event loop.
+        await run_in_threadpool(apply_request_rate_limits, request)
         response = await call_next(request)
     except HTTPException as error:
         response = JSONResponse({"detail": error.detail}, status_code=error.status_code)
@@ -85,6 +94,9 @@ async def audit_and_guard_requests(request: Request, call_next):
                 "appCheck": bool(getattr(request.state, "app_check_verified", False)),
             }
         )
+    response.headers["Server-Timing"] = f'app;dur={elapsed_ms:.2f}'
+    response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.2f}"
+    response.headers["X-Cache-Status"] = str(getattr(request.state, "cache_status", "bypass"))
     return response
 
 
@@ -133,6 +145,14 @@ async def normalize_json_text_response(request: Request, call_next):
     )
 
 
+# Added after response normalization so the final JSON bytes are compressed.
+api_app.add_middleware(
+    GZipMiddleware,
+    minimum_size=settings.gzip_minimum_size,
+    compresslevel=settings.gzip_compress_level,
+)
+
+
 api_app.include_router(ai_router)
 api_app.include_router(files_router)
 api_app.include_router(account_router)
@@ -149,7 +169,7 @@ def _readiness_payload() -> dict[str, object]:
     redis_ready = redis_cache.ping() if redis_required else None
     if redis_required and not redis_ready:
         raise HTTPException(status_code=503, detail="Redis analysis queue is not ready")
-    from app.integrations.postgres import postgres_ready
+    from app.integrations.postgres import postgres_pool_stats, postgres_ready
 
     postgres_is_ready = postgres_ready()
     if not postgres_is_ready:
@@ -168,6 +188,7 @@ def _readiness_payload() -> dict[str, object]:
         "data": {
             "provider": "supabase",
             "postgresReady": postgres_is_ready,
+            "pool": postgres_pool_stats(),
         },
     }
 
@@ -193,6 +214,9 @@ app = CORSMiddleware(
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}):(8081|8090|19006)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "If-None-Match"],
-    expose_headers=["ETag", "X-Data-Revision"],
+    allow_headers=["Authorization", "Content-Type", "If-None-Match", "If-Match"],
+    expose_headers=[
+        "ETag", "X-Data-Revision", "X-Generated-At", "X-Cache-Status",
+        "X-Process-Time-Ms", "Server-Timing",
+    ],
 )

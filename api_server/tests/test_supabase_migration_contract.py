@@ -31,6 +31,18 @@ class SupabaseMigrationContractTests(unittest.TestCase):
         }
         self.assertEqual(_target_collisions(source), ["analysis_feedback/same"])
 
+    def test_performance_migration_covers_cursor_and_hot_filters(self) -> None:
+        migration_sql = (
+            Path(__file__).resolve().parents[2]
+            / "supabase"
+            / "migrations"
+            / "202607220002_api_performance_indexes.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn("coalesce(source_updated_at, updated_at)", migration_sql)
+        self.assertIn("uploaded_files_owner_type_cursor_idx", migration_sql)
+        self.assertIn("analysis_feedback_owner_action_cursor_idx", migration_sql)
+        self.assertIn("synced_analysis_cache_owner_cache_key_idx", migration_sql)
+
     def test_google_drive_secret_round_trip_uses_ciphertext(self) -> None:
         key = base64.b64encode(bytes(range(32))).decode("ascii")
         secret = {"accessToken": "plain-access", "refreshToken": "plain-refresh"}

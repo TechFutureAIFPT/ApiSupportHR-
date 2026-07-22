@@ -5,13 +5,24 @@ from datetime import datetime, timezone
 from math import isfinite
 from typing import Any
 
+from app.integrations import redis_cache
 from app.repositories.postgres import account_repository as repo
 from app.schemas.account import AuthenticatedUser
+from app.services.account import response_cache_service
+from app.services.account.response_cache_service import CachedPayload
 from app.services.account.shared import serialize
 
 
 SETTINGS_VERSION = 1
 ALLOWED_HISTORY_RETENTION = {50, 100, 200}
+
+
+class SettingsWriteConflict(RuntimeError):
+    pass
+
+
+class SettingsWriteBusy(RuntimeError):
+    pass
 
 
 def _now_millis() -> int:
@@ -182,35 +193,96 @@ def _document_payload(user: AuthenticatedUser, settings: dict[str, Any], include
     return payload
 
 
-def get_user_settings(user: AuthenticatedUser) -> dict[str, Any]:
+def _cache_key(user: AuthenticatedUser) -> str:
+    return response_cache_service.account_cache_key("settings", user.uid)
+
+
+def _load_user_settings(
+    user: AuthenticatedUser,
+    *,
+    persist_default: bool,
+) -> tuple[CachedPayload, bool]:
+    cache_key = _cache_key(user)
+    cached = response_cache_service.read_cached_payload(cache_key)
+    if cached is not None and isinstance(cached.payload, dict):
+        return cached, True
+
     doc_ref = repo.user_settings().document(user.uid)
     snapshot = doc_ref.get()
     exists = bool(getattr(snapshot, "exists", False))
     if not exists:
         settings = default_user_settings(user)
-        doc_ref.set(_document_payload(user, settings, include_created_at=True))
-        return settings
-    data = snapshot.to_dict() or {}
-    return normalize_user_settings(serialize(data.get("settings") or data), user)
+        if persist_default:
+            doc_ref.set(_document_payload(user, settings, include_created_at=True))
+    else:
+        data = snapshot.to_dict() or {}
+        settings = normalize_user_settings(serialize(data.get("settings") or data), user)
+    return response_cache_service.write_cached_payload(cache_key, "settings", settings), exists
+
+
+def get_user_settings_response(user: AuthenticatedUser) -> CachedPayload:
+    cached, _ = _load_user_settings(user, persist_default=True)
+    return cached
+
+
+def get_user_settings(user: AuthenticatedUser) -> dict[str, Any]:
+    return get_user_settings_response(user).payload
+
+
+def _assert_expected_revision(expected_revision: str | None, current_revision: str) -> None:
+    normalized = response_cache_service.normalize_if_none_match(expected_revision)
+    if not normalized or normalized == "*":
+        return
+    if normalized != current_revision:
+        raise SettingsWriteConflict("Settings changed on another device. Reload before saving again.")
+
+
+def save_user_settings_response(
+    user: AuthenticatedUser,
+    patch: dict[str, Any],
+    *,
+    expected_revision: str | None = None,
+) -> CachedPayload:
+    lock_key = f"lock:settings:{user.uid}"
+    with redis_cache.distributed_lock(lock_key, ttl_seconds=10, wait_timeout_seconds=1.5) as acquired:
+        if not acquired:
+            raise SettingsWriteBusy("Another settings update is still being committed.")
+        current_cached, exists = _load_user_settings(user, persist_default=False)
+        _assert_expected_revision(expected_revision, current_cached.revision)
+        current = normalize_user_settings(current_cached.payload, user)
+        settings = merge_user_settings(current, patch, user)
+        settings["sync"]["lastSyncedAt"] = _now_millis()
+
+        repo.user_settings().document(user.uid).set(
+            _document_payload(user, settings, include_created_at=not exists),
+            merge=exists,
+        )
+        return response_cache_service.write_cached_payload(_cache_key(user), "settings", settings)
 
 
 def save_user_settings(user: AuthenticatedUser, patch: dict[str, Any]) -> dict[str, Any]:
-    doc_ref = repo.user_settings().document(user.uid)
-    snapshot = doc_ref.get()
-    exists = bool(getattr(snapshot, "exists", False))
-    current = normalize_user_settings((snapshot.to_dict() or {}).get("settings") if exists else {}, user)
-    settings = merge_user_settings(current, patch, user)
-    settings["sync"]["lastSyncedAt"] = _now_millis()
+    return save_user_settings_response(user, patch).payload
 
-    doc_ref.set(_document_payload(user, settings, include_created_at=not exists), merge=exists)
-    return settings
+
+def reset_user_settings_response(
+    user: AuthenticatedUser,
+    *,
+    expected_revision: str | None = None,
+) -> CachedPayload:
+    lock_key = f"lock:settings:{user.uid}"
+    with redis_cache.distributed_lock(lock_key, ttl_seconds=10, wait_timeout_seconds=1.5) as acquired:
+        if not acquired:
+            raise SettingsWriteBusy("Another settings update is still being committed.")
+        current_cached, exists = _load_user_settings(user, persist_default=False)
+        _assert_expected_revision(expected_revision, current_cached.revision)
+        settings = default_user_settings(user)
+        settings["sync"]["lastSyncedAt"] = _now_millis()
+        repo.user_settings().document(user.uid).set(
+            _document_payload(user, settings, include_created_at=not exists),
+            merge=exists,
+        )
+        return response_cache_service.write_cached_payload(_cache_key(user), "settings", settings)
 
 
 def reset_user_settings(user: AuthenticatedUser) -> dict[str, Any]:
-    doc_ref = repo.user_settings().document(user.uid)
-    snapshot = doc_ref.get()
-    exists = bool(getattr(snapshot, "exists", False))
-    settings = default_user_settings(user)
-    settings["sync"]["lastSyncedAt"] = _now_millis()
-    doc_ref.set(_document_payload(user, settings, include_created_at=not exists), merge=exists)
-    return settings
+    return reset_user_settings_response(user).payload
