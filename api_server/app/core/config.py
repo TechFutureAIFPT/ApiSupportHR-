@@ -59,17 +59,17 @@ class Settings:
         if self.data_provider == "supabase" and not self.database_url:
             raise ValueError("DATABASE_URL is required when DATA_PROVIDER=supabase.")
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
-        self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.gemini_cv_analysis_model = (
-            os.getenv("GEMINI_CV_ANALYSIS_MODEL", "gemini-2.5-pro").strip()
+            os.getenv("GEMINI_CV_ANALYSIS_MODEL", "gemini-3.6-flash").strip()
             or self.gemini_default_model
         )
         self.quick_cv_gemini_model = (
-            os.getenv("QUICK_CV_GEMINI_MODEL", "gemini-2.5-flash").strip()
+            os.getenv("QUICK_CV_GEMINI_MODEL", "gemini-3.6-flash").strip()
             or self.gemini_cv_analysis_model
         )
         self.mobile_jd_gemini_model = (
-            os.getenv("MOBILE_JD_GEMINI_MODEL", "gemini-2.5-flash").strip()
+            os.getenv("MOBILE_JD_GEMINI_MODEL", "gemini-3.6-flash").strip()
             or self.gemini_default_model
         )
         self.gemini_thinking_budget = int(os.getenv("GEMINI_THINKING_BUDGET", "8000"))

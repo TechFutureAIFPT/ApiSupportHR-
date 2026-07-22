@@ -27,7 +27,6 @@ from app.services.gemini_service import generate_content
 MIN_PDF_TEXT_LENGTH = 200
 MAX_OCR_PAGES = 3
 PDF_RENDER_SCALE = 2.2
-GEMINI_VISION_MODEL = "gemini-1.5-flash"
 
 
 def _normalize_text(text: str) -> str:
@@ -64,7 +63,7 @@ def _ocr_image_bytes(
 ) -> str:
     settings = get_settings()
     response = generate_content(
-        GEMINI_VISION_MODEL or settings.gemini_default_model,
+        settings.gemini_default_model,
         [
             {
                 "role": "user",

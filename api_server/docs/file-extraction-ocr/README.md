@@ -98,7 +98,7 @@ Backend thử decode theo thứ tự:
 Model OCR hiện tại:
 
 ```text
-gemini-1.5-flash
+gemini-3.6-flash
 ```
 
 Prompt OCR yêu cầu:

@@ -56,7 +56,7 @@ Lưu lịch sử chấm CV nhanh trên app mobile.
     }
   ],
 
-  "model": "gemini-2.5-flash",
+  "model": "gemini-3.6-flash",
   "usageNote": "Quick CV score from mobile"
 }
 ```

@@ -44,11 +44,11 @@ services:
       - key: GOOGLE_CLOUD_VISION_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.6-flash
       - key: GEMINI_CV_ANALYSIS_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.6-flash
       - key: MOBILE_JD_GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.6-flash
       - key: MOBILE_JD_GEMINI_API_KEY
         sync: false
       - key: GEMINI_EMBEDDING_MODEL

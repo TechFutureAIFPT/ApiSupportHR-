@@ -76,9 +76,20 @@ def _supports_thinking_config(model_name: str) -> bool:
     return "gemini-2.5" in (model_name or "").lower()
 
 
+def _config_for_model(config: Any, model_name: str) -> Any:
+    if not isinstance(config, dict):
+        return config
+
+    normalized_model = (model_name or "").strip().lower()
+    if normalized_model.startswith(("gemini-3.6-flash", "gemini-3.5-flash-lite")):
+        deprecated_sampling_keys = {"temperature", "top_p", "top_k"}
+        return {key: value for key, value in config.items() if key not in deprecated_sampling_keys}
+    return dict(config)
+
+
 def _fallback_models(model: str) -> Iterable[str]:
     seen: set[str] = set()
-    for candidate in (model, "gemini-3.5-flash", "gemini-2.5-flash"):
+    for candidate in (model, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"):
         normalized = (candidate or "").strip()
         if normalized and normalized not in seen:
             seen.add(normalized)
@@ -99,7 +110,7 @@ def generate_content(
     normalized_config = _normalize_config(config) if config is not None else None
 
     for target_model in _fallback_models(model):
-        attempt_config = normalized_config
+        attempt_config = _config_for_model(normalized_config, target_model)
         if isinstance(attempt_config, dict) and "thinking_config" in attempt_config and not _supports_thinking_config(target_model):
             attempt_config = {key: value for key, value in attempt_config.items() if key != "thinking_config"}
 
