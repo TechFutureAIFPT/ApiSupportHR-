@@ -10,7 +10,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: api
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           resources:
             requests:
               cpu: 250m
@@ -25,13 +25,16 @@ metadata:
   name: supporthr-worker
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   template:
     spec:
       imagePullSecrets:
         - name: ghcr-pull
       containers:
         - name: worker
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           resources:
             requests:
               cpu: 300m

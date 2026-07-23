@@ -3,9 +3,12 @@
 .env.example
 !api_server/.env.example
 !deploy/vps/runtime.env.example
+!deploy/vps/k3s-secret.env.example
 deploy/vps/runtime.env
 deploy/vps/.current-image
 deploy/vps/.previous-image
+deploy/vps/.current-k3s-image
+deploy/vps/.previous-k3s-image
 deploy/vps/backups/
 deploy/kubernetes/overlays/oci-free/secret.env
 admin/

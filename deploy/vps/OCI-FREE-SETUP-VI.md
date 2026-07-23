@@ -1,94 +1,148 @@
-# Tạo OCI Always Free cho SupportHR
+# Thiết lập SupportHR trên OCI/VPS bằng K3s
 
-Mục tiêu là một VM ARM64 tự chạy Docker Compose, không dùng Render. Cấu hình dưới đây nằm trong giới hạn Always Free hiện hành: tổng 2 OCPU và 12 GB RAM cho Ampere A1 trong home region.
-
-## 1. Tạo tài khoản và mạng
-
-1. Đăng nhập OCI Console. Không bấm **Upgrade** nếu muốn giữ tài khoản Free Tier.
-2. Always Free chỉ áp dụng trong **home region**. Nếu đang tạo tài khoản mới, chọn region gần người dùng và có dung lượng A1; Singapore thường phù hợp với Việt Nam nhưng có thể hết capacity.
-3. Mở **Networking → Virtual Cloud Networks → Start VCN Wizard**.
-4. Chọn **Create VCN with Internet Connectivity** và hoàn tất wizard.
-
-OCI thường yêu cầu số điện thoại và thẻ để xác minh. Thẻ không bị tính tiền nếu tài khoản không upgrade và chỉ dùng tài nguyên có nhãn **Always Free-eligible**.
-
-## 2. Tạo VM
-
-Mở **Compute → Instances → Create instance** và đặt:
-
-- Name: `supporthr-api-01`.
-- Image: bản Ubuntu LTS ARM64 mới nhất có nhãn **Always Free-eligible**.
-- Shape: `VM.Standard.A1.Flex`.
-- OCPU: `2`.
-- Memory: `12 GB`.
-- Networking: VCN vừa tạo, public subnet và bật **Automatically assign a public IPv4 address**.
-- Boot volume: giữ mặc định khoảng `50 GB`, bật in-transit encryption, không thêm paid block volume.
-- SSH: dùng **Generate a key pair** hoặc upload public key OpenSSH của bạn.
-
-Nếu OCI tạo key, tải cả private/public key ngay khi màn hình cho phép. Private key không thể tải lại sau đó. Lưu private key trên máy, ví dụ:
+Mục tiêu production:
 
 ```text
-C:\Users\Admin\.ssh\supporthr_oci.key
+GitHub -> Docker image trên GHCR -> K3s/containerd trên VPS
+                                  -> API + worker + Redis PVC
+                                  -> Traefik + Let's Encrypt
 ```
 
-Không gửi nội dung private key, Supabase password hoặc Gemini key qua chat/Git.
+Docker chỉ dùng để build image trong GitHub Actions. VPS chạy K3s, không chạy Docker Compose song song.
 
-## 3. Mở cổng trong OCI VCN
+## 1. Tạo VPS
 
-Trong subnet/security list của VM, thêm stateful ingress:
+Chọn Ubuntu LTS mới, kiến trúc ARM64 hoặc AMD64. Với một API, một worker và Redis, nên có tối thiểu:
 
-| Source | Protocol | Destination port | Mục đích |
+- 2 CPU.
+- 8 GB RAM; 12 GB phù hợp hơn cho worker AI.
+- 40-50 GB boot disk.
+- Public IPv4 cố định.
+- SSH bằng key, không dùng mật khẩu.
+
+Nếu dùng OCI Free Tier, luôn kiểm tra lại nhãn Free-eligible, quota và giới hạn tại thời điểm tạo máy. Free Tier không phải cam kết uptime.
+
+## 2. Firewall và DNS
+
+Mở trong cloud firewall/security list:
+
+| Nguồn | Giao thức | Cổng | Mục đích |
 | --- | --- | --- | --- |
-| `0.0.0.0/0` | TCP | `22` | GitHub Actions SSH; máy chỉ cho key, tắt password/root và có Fail2ban |
-| `0.0.0.0/0` | TCP | `80` | Caddy nhận HTTP/Let's Encrypt |
+| IP quản trị hoặc GitHub Actions | TCP | `22` | SSH bằng key |
+| `0.0.0.0/0` | TCP | `80` | HTTP/ACME |
 | `0.0.0.0/0` | TCP | `443` | HTTPS |
-| `0.0.0.0/0` | UDP | `443` | HTTP/3 |
 
-Không mở `6379`, `8000` hoặc cổng PostgreSQL ra Internet.
+Không mở `6379`, `6443` hoặc `8000` ra Internet.
 
-## 4. Kết nối lần đầu và bootstrap
+Tạo bản ghi `A`, ví dụ:
 
-Từ PowerShell tại `D:\Support HR\Software\Web\BE`:
-
-```powershell
-scp -i C:\Users\Admin\.ssh\supporthr_oci.key -r deploy/vps ubuntu@YOUR_VPS_IP:/tmp/supporthr-vps
-ssh -i C:\Users\Admin\.ssh\supporthr_oci.key ubuntu@YOUR_VPS_IP "sudo bash /tmp/supporthr-vps/bootstrap-ubuntu.sh"
+```text
+backend.supporthr-tf.com.vn -> PUBLIC_VPS_IP
 ```
 
-Ngắt SSH rồi kết nối lại để quyền nhóm Docker có hiệu lực. Bootstrap cài Docker/Compose, UFW, Fail2ban, security updates và watchdog tự phục hồi container.
+Đặt TTL `300` trong giai đoạn cutover.
 
-## 5. Nạp runtime secret và GHCR
+## 3. Bootstrap K3s
 
-Trên VM:
+Từ PowerShell hoặc terminal tại `Software/Web/BE`:
 
 ```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USER --password-stdin
-cp /tmp/supporthr-vps/runtime.env.example /opt/supporthr/shared/runtime.env
-chmod 600 /opt/supporthr/shared/runtime.env
-nano /opt/supporthr/shared/runtime.env
+scp -i /path/to/private-key -r deploy/vps ubuntu@YOUR_VPS_IP:/tmp/supporthr-vps
+ssh -i /path/to/private-key ubuntu@YOUR_VPS_IP \
+  "sudo bash /tmp/supporthr-vps/bootstrap-k3s-ubuntu.sh"
 ```
 
-PAT dùng cho `GHCR_TOKEN` chỉ cần quyền đọc package. Điền toàn bộ placeholder Supabase, Gemini, OAuth, domain và email ACME; không commit file này.
+Bootstrap thực hiện:
 
-## 6. DNS và GitHub Actions
+- Cài K3s stable, Traefik và Metrics Server.
+- Cài cert-manager `v1.19.6`.
+- Bật mã hóa Kubernetes Secrets at rest.
+- Cấu hình kubeconfig chỉ cho nhóm `supporthr-k3s`.
+- Tắt SSH password/root login.
+- Bật Fail2ban, unattended upgrades và UFW.
+- Cho phép Pod/Service CIDR nội bộ của K3s.
 
-1. Tạo bản ghi A riêng `backend.supporthr-tf.com.vn` trỏ tới public IP, TTL `300`. Bản ghi riêng sẽ thay wildcard Vercel cho đúng subdomain này.
-2. Xác minh SSH host fingerprint ngoài luồng, rồi lưu dòng known-host vào GitHub secret `VPS_KNOWN_HOSTS`.
-3. Tạo GitHub environment `production` với `VPS_HOST`, `VPS_USER=ubuntu`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS` và tùy chọn `VPS_PORT`.
-4. Chỉ sau khi các bước trên xong mới tạo repository variable `ENABLE_VPS_DEPLOY=true`.
-5. Chạy workflow **Deploy backend to self-hosted VPS** lần đầu với image mặc định `:main`.
+Ngắt SSH và kết nối lại một lần sau bootstrap để quyền nhóm có hiệu lực.
 
-## 7. Gate trước khi tắt Render
+## 4. Nạp runtime secret
 
-Chỉ chuyển FE sang `https://backend.supporthr-tf.com.vn` và xóa Render sau khi đạt đủ:
+Trên VPS:
 
-- `/health/live` và `/health/ready` trả thành công qua HTTPS.
-- Đăng nhập Supabase, profile, history và JD template hoạt động.
-- Upload/OCR, chatbot, feedback và async analysis hoạt động.
-- Worker xử lý job; Redis AOF còn dữ liệu sau restart.
-- Rollback image cũ đã thử thành công.
+```bash
+cp /tmp/supporthr-vps/k3s-secret.env.example /opt/supporthr/shared/supporthr-secret.env
+chmod 600 /opt/supporthr/shared/supporthr-secret.env
+nano /opt/supporthr/shared/supporthr-secret.env
+bash /tmp/supporthr-vps/prepare-k3s-secrets.sh
+```
 
-## Giới hạn miễn phí cần biết
+Điền Supabase, Gemini và Google OAuth thật. Không gửi nội dung file này qua chat hoặc commit lên Git.
 
-OCI Always Free không phải SLA 24/7. Oracle nêu rõ VM Always Free nhàn rỗi trong bảy ngày có thể bị thu hồi nếu cả CPU, network và memory đều dưới ngưỡng của họ. Không tạo tải giả để né chính sách; nếu hệ thống cần cam kết uptime thật, phải dùng gói trả phí hoặc thêm node/nhà cung cấp dự phòng.
+Script sẽ hỏi:
 
-Nguồn đối chiếu: [OCI Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm), [OCI Creating an Instance](https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/launchinginstance.htm), [Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/) và [GitHub deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+- GitHub username.
+- Classic PAT chỉ có quyền `read:packages`.
+
+Token dùng để tạo `ghcr-pull` trong Kubernetes, không được ghi vào repo.
+
+## 5. Cấu hình GitHub
+
+Tạo GitHub environment `production`.
+
+Secrets:
+
+- `VPS_HOST`
+- `VPS_USER=ubuntu`
+- `VPS_PORT`, có thể bỏ trống để dùng `22`
+- `VPS_SSH_KEY`
+- `VPS_KNOWN_HOSTS`
+
+Variables:
+
+- `API_DOMAIN=backend.supporthr-tf.com.vn`
+- `ACME_EMAIL=your-email@example.com`
+- `ENABLE_K3S_DEPLOY=true`
+
+Chỉ bật `ENABLE_K3S_DEPLOY` sau khi DNS đã trỏ đúng, K3s hoạt động và hai secret `supporthr-backend-secrets`, `ghcr-pull` đã tồn tại.
+
+## 6. Deploy
+
+Push thay đổi backend lên `main`. Workflow build tạo image đa kiến trúc và workflow deploy đưa đúng tag bất biến `sha-*` lên VPS.
+
+Theo dõi trên VPS:
+
+```bash
+kubectl -n supporthr-oci get pods,service,ingress,pvc
+kubectl -n supporthr-oci rollout status deployment/supporthr-api
+kubectl -n supporthr-oci rollout status deployment/supporthr-worker
+curl -f https://backend.supporthr-tf.com.vn/health/live
+curl -f https://backend.supporthr-tf.com.vn/health/ready
+```
+
+Rollback thủ công:
+
+```bash
+cd /opt/supporthr/backend
+bash deploy/vps/rollback-k3s.sh
+```
+
+Deploy tự rollback API và worker nếu rollout hoặc public health gate thất bại. Redis PVC không bị thay đổi khi rollback image.
+
+## 7. Gate trước khi xóa Render
+
+Chỉ xóa Render sau khi:
+
+- HTTPS và chứng chỉ hợp lệ.
+- `/health/live` và `/health/ready` thành công.
+- Đăng nhập, profile, history và JD template hoạt động.
+- Upload/OCR, chatbot, feedback và GraphRAG hoạt động.
+- Async analysis được worker xử lý.
+- Redis còn hoạt động sau khi restart pod.
+- Đã thử rollback.
+- Frontend và Android đã đổi API URL sang domain VPS.
+
+Nguồn đối chiếu:
+
+- [K3s Quick Start](https://docs.k3s.io/quick-start)
+- [K3s requirements](https://docs.k3s.io/installation/requirements)
+- [cert-manager installation](https://cert-manager.io/v1.19-docs/installation/kubectl/)
+- [GitHub Container Registry authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)

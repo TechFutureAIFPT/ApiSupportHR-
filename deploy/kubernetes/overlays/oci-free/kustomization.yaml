@@ -12,7 +12,7 @@ resources:
 images:
   - name: supporthr-backend
     newName: ghcr.io/techfutureaifpt/supporthr-backend
-    newTag: main
+    newTag: replace-with-release-tag
 
 patches:
   - path: config-patch.yaml

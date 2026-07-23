@@ -76,28 +76,25 @@ For bursty analysis traffic, CPU/memory HPA is only the baseline. Add KEDA or an
 
 The `oci-free` overlay is sized for a single free ARM64 VM. It keeps one API pod, one worker and a persistent Redis StatefulSet, and intentionally removes HPA/PDB objects that do not improve availability on one node.
 
-1. Install K3s on Ubuntu and keep the bundled Traefik ingress controller.
-2. Install cert-manager, edit `clusterissuer.example.yaml`, then apply it.
-3. Copy `secret.env.example` outside Git, fill it, and create the runtime secret.
-4. Create the GHCR pull secret for the private image package.
-5. Replace `api.example.com` in `ingress.yaml` and change `newTag` to an immutable `sha-*` image tag.
-6. Apply the overlay and wait for the API and worker.
+The supported production path is automated by:
 
 ```bash
-kubectl create namespace supporthr-oci --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n supporthr-oci create secret generic supporthr-backend-secrets --from-env-file=/secure/path/supporthr-secret.env
-kubectl -n supporthr-oci create secret docker-registry ghcr-pull --docker-server=ghcr.io --docker-username=YOUR_GITHUB_USER --docker-password="$GHCR_TOKEN"
-kubectl apply -f deploy/kubernetes/overlays/oci-free/clusterissuer.example.yaml
-kubectl apply -k deploy/kubernetes/overlays/oci-free
-kubectl -n supporthr-oci rollout status deployment/supporthr-api
-kubectl -n supporthr-oci rollout status deployment/supporthr-worker
+sudo bash deploy/vps/bootstrap-k3s-ubuntu.sh
+bash deploy/vps/prepare-k3s-secrets.sh
+SUPPORTHR_IMAGE_REF=ghcr.io/techfutureaifpt/supporthr-backend:sha-0123456789ab \
+  API_DOMAIN=backend.supporthr-tf.com.vn \
+  ACME_EMAIL=admin@example.com \
+  bash deploy/vps/deploy-k3s.sh
 ```
 
-Roll back an application release without changing Redis data:
+`deploy-k3s.sh` works on a temporary Kustomize copy, so the committed overlay keeps placeholders instead of a mutable production tag or domain. It accepts only immutable `sha-*` images, generates the real Ingress and ClusterIssuer, waits for Redis/API/worker plus public HTTPS readiness, and automatically restores the previous API and worker image on failure.
+
+The GitHub workflow `.github/workflows/deploy-vps.yml` uploads and runs the same script after a successful image build. Runtime application secrets are created separately from `/opt/supporthr/shared/supporthr-secret.env` on the VPS and are not rewritten during normal releases; GitHub stores only SSH connection inputs and non-secret domain/email variables.
+
+Manual rollback does not change the Redis PVC:
 
 ```bash
-kubectl -n supporthr-oci rollout undo deployment/supporthr-api
-kubectl -n supporthr-oci rollout undo deployment/supporthr-worker
+bash deploy/vps/rollback-k3s.sh
 ```
 
 K3s uses containerd to run the same OCI image produced by Docker Buildx; Docker Engine is not required on the K3s node after the image has been pushed to GHCR.
