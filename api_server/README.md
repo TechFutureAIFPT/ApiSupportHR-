@@ -148,9 +148,13 @@ Async CV analysis:
 
 ### Deploy
 
-The primary free-VPS deployment is `../compose.production.yaml` with operating scripts under `../deploy/vps`.
-Kubernetes/K3s manifests and operating notes are under `../deploy/kubernetes`; `overlays/oci-free` is the
-single-node ARM64 target, while `overlays/production` remains the multi-node path.
+The repository-level `../render.yaml` is the temporary free demo deployment: one Render web service,
+`ANALYSIS_JOB_MODE=in_process`, and no paid worker or Redis service. Render secrets must be configured
+in the dashboard before `/health/ready` can pass.
+
+The primary production target remains `../compose.production.yaml` with operating scripts under
+`../deploy/vps`. Kubernetes/K3s manifests and operating notes are under `../deploy/kubernetes`;
+`overlays/oci-free` is the single-node ARM64 target, while `overlays/production` remains the multi-node path.
 
 - Python version is pinned in `.python-version`
 - Start command:
@@ -161,6 +165,7 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
 - GitHub Actions publishes AMD64/ARM64 images to GHCR; pin production to an immutable `sha-*` tag.
 - The gated VPS workflow deploys successful `main` images over verified-host SSH and runs the public health/rollback gate.
-- The old Render blueprint is legacy rollback configuration only and is not part of the primary runtime.
+- Keep only the repository-level Render blueprint; do not add a second copy under `api_server`.
+- Render free mode is for demo/acceptance traffic and may spin down. It is not the production queue topology.
 - The self-trained CV classifier can stay local inside this API, or be deployed as a separate HTTP service and wired back through `LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL`.
 - Canonical offline training and exemplar ingestion live in `../ml_pipeline`; raw data and generated artifacts are not copied into the server image.

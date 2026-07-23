@@ -2,12 +2,14 @@ services:
   - type: web
     name: backendsupporthr
     runtime: python
-    plan: starter
-    numInstances: 1
+    plan: free
+    region: singapore
     rootDir: api_server
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
+    buildCommand: python -m pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    healthCheckPath: /health/live
+    autoDeployTrigger: commit
+    numInstances: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11
@@ -15,29 +17,23 @@ services:
         value: SupportHR Backend
       - key: MAINTENANCE_MODE
         value: "false"
+      - key: FRONTEND_ORIGIN
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_JWT_AUDIENCE
         value: authenticated
+      - key: SUPABASE_JWT_ISSUER
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: DATA_ENCRYPTION_KEY
         sync: false
-      - key: FRONTEND_ORIGIN
+      - key: GEMINI_API_KEY_1
         sync: false
-      - key: GOOGLE_DRIVE_ALLOWED_ORIGINS
-        sync: false
-      - key: GOOGLE_OAUTH_CLIENT_ID
-        sync: false
-      - key: GOOGLE_OAUTH_CLIENT_SECRET
-        sync: false
-      - key: GOOGLE_OAUTH_REDIRECT_URI
-        sync: false
-      - key: GOOGLE_PICKER_API_KEY
-        sync: false
-      - key: GOOGLE_API_KEY
-        sync: false
-      - key: GOOGLE_CLOUD_VISION_API_KEY
+      - key: GEMINI_API_KEY_2
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.6-flash
@@ -47,114 +43,19 @@ services:
         value: gemini-embedding-2
       - key: GEMINI_EMBEDDING_DIMENSION
         value: "768"
-      - key: GEMINI_API_KEY_1
-        sync: false
-      - key: GEMINI_API_KEY_2
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          name: supporthr-cache
-          property: connectionString
-      - key: REDIS_INTERNAL_URL
-        fromService:
-          name: supporthr-cache
-          property: connectionString
-      - key: ANALYSIS_JOB_MODE
-        value: redis
-      - key: POSTGRES_POOL_MAX_SIZE
-        value: "15"
-      - key: POSTGRES_POOL_MAX_WAITING
-        value: "60"
-      - key: POSTGRES_POOL_TIMEOUT_SECONDS
-        value: "5"
-      - key: REDIS_MAX_CONNECTIONS
-        value: "50"
-      - key: ACCOUNT_CACHE_TTL_SECONDS
-        value: "120"
-      - key: SETTINGS_CACHE_TTL_SECONDS
-        value: "600"
-      - key: MOBILE_INBOX_CACHE_TTL_SECONDS
-        value: "60"
-      - key: TEMPLATE_CACHE_TTL_SECONDS
-        value: "300"
-      - key: SYNC_CACHE_TTL_SECONDS
-        value: "300"
-      - key: UPLOAD_FILE_SIZE_LIMIT_MB
-        value: "15"
-      - key: ALLOWED_UPLOAD_EXTENSIONS
-        value: ".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
-      - key: ALLOWED_UPLOAD_MIME_TYPES
-        value: application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg
-      - key: VECTOR_STORE_COLLECTION
-        value: vectorLibraryRecords
-      - key: APPROVED_EXEMPLARS_COLLECTION
-        value: approvedExemplars
-      - key: RUBRIC_VERSION
-        value: v2
       - key: VECTOR_INDEX_VERSION
         value: gemini-embedding-2-768-v1
+      - key: ANALYSIS_JOB_MODE
+        value: in_process
       - key: LOCAL_CLASSIFIER_MODE
         value: local
-      - key: LOCAL_CLASSIFIER_REMOTE_CLASSIFY_URL
-        sync: false
-      - key: LOCAL_CLASSIFIER_REMOTE_STATUS_URL
-        sync: false
-      - key: LOCAL_CLASSIFIER_REMOTE_TIMEOUT_SECONDS
-        value: "10"
-      - key: LOCAL_CLASSIFIER_CONFIDENCE_THRESHOLD
-        value: "0.60"
-      - key: RAG_SIMILARITY_THRESHOLD
-        value: "0.75"
-      - key: RAG_MAX_EXEMPLARS
-        value: "2"
-      - key: RAG_CANDIDATE_LIMIT
-        value: "100"
-      - key: AI_PREPROCESS_CONCURRENCY
-        value: "4"
       - key: REQUIRE_CLASSIFIER_READY
         value: "true"
-      - key: GZIP_MINIMUM_SIZE
-        value: "1024"
-      - key: GZIP_COMPRESS_LEVEL
-        value: "5"
-  - type: worker
-    name: supporthr-analysis-worker
-    runtime: python
-    plan: starter
-    numInstances: 1
-    rootDir: api_server
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m app.workers.analysis_worker
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.11
-      - key: DATABASE_URL
-        sync: false
-      - key: DATA_ENCRYPTION_KEY
-        sync: false
-      - key: GEMINI_MODEL
-        value: gemini-3.6-flash
-      - key: GEMINI_CV_ANALYSIS_MODEL
-        value: gemini-3.6-flash
-      - key: GEMINI_API_KEY_1
-        sync: false
-      - key: GEMINI_API_KEY_2
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          name: supporthr-cache
-          property: connectionString
-      - key: REDIS_INTERNAL_URL
-        fromService:
-          name: supporthr-cache
-          property: connectionString
-      - key: ANALYSIS_JOB_MODE
-        value: redis
+      - key: POSTGRES_POOL_MIN_SIZE
+        value: "1"
       - key: POSTGRES_POOL_MAX_SIZE
-        value: "10"
-      - key: REDIS_MAX_CONNECTIONS
-        value: "30"
-  - type: keyvalue
-    name: supporthr-cache
-    plan: starter
-    persistenceMode: snapshot
+        value: "5"
+      - key: AI_PREPROCESS_CONCURRENCY
+        value: "1"
+      - key: RAG_CANDIDATE_LIMIT
+        value: "50"

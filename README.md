@@ -97,7 +97,8 @@ Web/BE/
 ├─ deploy/kubernetes/      Base + local/OCI/production overlays
 ├─ deploy/vps/             Bootstrap, deploy, health và rollback
 ├─ docker-compose.yml      Local: API + Redis + worker
-└─ compose.production.yaml Production một VPS
+├─ compose.production.yaml Production một VPS
+└─ render.yaml             Render free demo (một web process)
 ```
 
 Các điểm vào nên xem:
@@ -112,6 +113,7 @@ Các điểm vào nên xem:
 - [ML pipeline](ml_pipeline/README.md)
 - [Kubernetes/K3s](deploy/kubernetes/README.md)
 - [VPS operations](deploy/vps/README.md)
+- [Render free blueprint](render.yaml)
 
 ## 6. API tiêu biểu
 
