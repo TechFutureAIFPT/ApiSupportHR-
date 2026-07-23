@@ -6,6 +6,7 @@ from typing import Any
 PIPELINE_VERSION = "cv-analysis-v2"
 MODEL_ARTIFACT_SCHEMA_VERSION = "supporthr-classifier-manifest-v1"
 EXEMPLAR_SCHEMA_VERSION = "supporthr-exemplar-v2"
+GRAPH_FACT_SCHEMA_VERSION = "supporthr-graph-fact-v1"
 DEFAULT_RUBRIC_VERSION = "v2"
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-2"
 DEFAULT_EMBEDDING_DIMENSION = 768

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "supporthr-quality-gates-v1",
+  "minimumTextCharacters": 80,
+  "maximumTextCharacters": 120000,
+  "maximumNearDuplicateHammingDistance": 3,
+  "releaseRequiresKnownLicense": true,
+  "releaseRequiresPinnedRevision": true,
+  "releaseRequiresZeroDetectedPii": true,
+  "evaluationSourcesMayNotEnterTraining": true,
+  "graphFactsRequireHumanApproval": true,
+  "graphDecisionImpact": "none"
+}

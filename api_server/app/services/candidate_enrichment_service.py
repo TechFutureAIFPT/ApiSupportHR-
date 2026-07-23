@@ -97,10 +97,6 @@ DETAIL_LIST_ALIASES = [
 ]
 
 
-def _normalize_text(value: str) -> str:
-    return re.sub(r"\s+", " ", (value or "").lower()).strip()
-
-
 def _normalize_lookup_key(value: str) -> str:
     normalized = unicodedata.normalize("NFD", value or "")
     normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
@@ -357,26 +353,6 @@ def _detail_item(title: str, score: str, formula: str, evidence: str, explanatio
     }
 
 
-def _extract_skills_from_jd(jd_text: str) -> List[str]:
-    lower = jd_text.lower()
-    return [skill for skill in SKILL_KEYWORDS if skill.lower() in lower]
-
-
-def _extract_skills_from_candidate(candidate: Dict[str, Any]) -> List[str]:
-    analysis = candidate.get("analysis") or {}
-    details = _get_analysis_details(analysis)
-    strengths = _get_analysis_value(analysis, ["Điểm mạnh CV", "Diem manh CV"], [])
-    texts = [
-        candidate.get("jobTitle", ""),
-        candidate.get("industry", ""),
-        candidate.get("department", ""),
-        *[_get_record_value(item, ["Dẫn chứng", "Dan chung"]) for item in details if isinstance(item, dict)],
-        *[str(item) for item in strengths],
-    ]
-    combined = " ".join(texts).lower()
-    return [skill for skill in SKILL_KEYWORDS if skill.lower() in combined]
-
-
 def _extract_companies_from_candidate(candidate: Dict[str, Any]) -> List[str]:
     analysis = candidate.get("analysis") or {}
     details = _get_analysis_details(analysis)
@@ -527,104 +503,7 @@ def _run_debiasing(cv_text: str, filters: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _tokenize(text: str) -> List[str]:
-    return [token for token in re.sub(r"[^\w\s-]", " ", text.lower()).split() if len(token) > 2]
-
-
-def _contains_any(text: str, words: List[str]) -> List[str]:
-    tokens = _tokenize(text)
-    return [word for word in words if any(word.lower() in token for token in tokens)]
-
-
-def _analyze_soft_skills(cv_text: str) -> Dict[str, Dict[str, Any]]:
-    return {}
-
-
-def _infer_level(title: str) -> int:
-    lower = title.lower()
-    normalized = _normalize_lookup_key(title)
-    searchable = f"{lower} {normalized}"
-    if re.search(r"director|vp|vice president|cto|ceo|cfo", searchable):
-        return 6
-    if re.search(r"manager|giam doc|truong phong|head", searchable):
-        return 5
-    if re.search(r"lead|team lead|truong nhom", searchable):
-        return 4
-    if re.search(r"senior|sr\.|chuyen gia|expert|cao cap", searchable):
-        return 3
-    if re.search(r"intern|fresher|thuc tap", searchable):
-        return 0
-    return 2
-
-
-def _analyze_career_velocity(experience_text: str) -> Dict[str, Any]:
-    milestones = []
-    current_title = ""
-    current_level = 2
-    current_company = ""
-    current_year = 2026
-    for line in [line for line in re.split(r"\n|\r", experience_text) if len(line.strip()) > 5]:
-        normalized_line = _normalize_lookup_key(line)
-        title_value = ""
-        company_value = ""
-        if ":" in line:
-            prefix, raw_value = line.split(":", 1)
-            prefix_key = _normalize_lookup_key(prefix)
-            if prefix_key in {"chuc danh", "vi tri", "position", "role", "title"}:
-                title_value = raw_value.strip()
-            elif prefix_key in {"cong ty", "company", "doanh nghiep", "tai"}:
-                company_value = raw_value.strip()
-        if not title_value:
-            title_match = re.search(r"(?:chuc danh|vi tri|position|role|title)\s+(.+)", normalized_line, re.IGNORECASE)
-            title_value = title_match.group(1).strip() if title_match else ""
-        if not company_value:
-            company_match = re.search(r"(?:cong ty|company|doanh nghiep|tai)\s+(.+)", normalized_line, re.IGNORECASE)
-            company_value = company_match.group(1).strip() if company_match else ""
-        year_match = re.findall(
-            r"(?:20\d{2}|19\d{2})(?:\s*[-–]\s*(?:20\d{2}|19\d{2}|nay|hiện tại|present))?",
-            line,
-            re.IGNORECASE,
-        ) or re.findall(
-            r"(?:20\d{2}|19\d{2})(?:\s*[-]\s*(?:20\d{2}|19\d{2}|nay|hien tai|present))?",
-            normalized_line,
-            re.IGNORECASE,
-        )
-        if title_value:
-            current_title = title_value
-            current_level = _infer_level(current_title)
-        if company_value:
-            current_company = company_value
-        if year_match:
-            years = re.findall(r"\d{4}", " ".join(year_match))
-            if years:
-                start_year = int(years[0])
-                end_year = int(years[1]) if len(years) > 1 else current_year
-                months = max(0, (end_year - start_year) * 12)
-                is_promotion = len(milestones) > 0 and current_level > milestones[-1]["level"]
-                milestones.append({"title": current_title or "Không rõ chức danh", "level": current_level, "company": current_company, "durationMonths": months, "isPromotion": is_promotion})
-                current_title = ""
-                current_company = ""
-    if not milestones:
-        return {"peakLevel": 0, "peakTitle": "Không rõ", "totalMonths": 0, "promotionMonths": 0, "promotionCount": 0, "avgMonthsPerLevel": 0, "potentialScore": 0, "velocityTag": "normal"}
-    peak = max(milestones, key=lambda item: item["level"])
-    total_months = sum(item["durationMonths"] for item in milestones)
-    promotion_months = sum(item["durationMonths"] for item in milestones if item["isPromotion"])
-    promotion_count = sum(1 for item in milestones if item["isPromotion"])
-    avg_months = round((promotion_months / promotion_count) if promotion_count > 0 else total_months)
-    if avg_months <= 18:
-        potential_score, tag = 18, "fast"
-    elif avg_months <= 36:
-        potential_score, tag = 12, "normal"
-    else:
-        potential_score, tag = 6, "slow"
-    if peak["level"] >= 4:
-        potential_score = min(20, potential_score + 2)
-    if promotion_count >= 3:
-        potential_score = min(20, potential_score + 2)
-    return {"peakLevel": peak["level"], "peakTitle": peak["title"], "totalMonths": total_months, "promotionMonths": promotion_months, "promotionCount": promotion_count, "avgMonthsPerLevel": avg_months, "potentialScore": potential_score, "velocityTag": tag}
-
-
-def _score_skill_match_legacy(jd_skills: List[str], candidate_skills: List[str]) -> Dict[str, Any]:
+def _score_generic_skill_match(jd_skills: List[str], candidate_skills: List[str]) -> Dict[str, Any]:
     cand_set = {skill.lower() for skill in candidate_skills}
     matched: List[str] = []
     unmatched: List[str] = []
@@ -656,17 +535,12 @@ def _score_skill_match_legacy(jd_skills: List[str], candidate_skills: List[str])
         "transferMatches": transfer_matches,
         "familyClusters": list(dict.fromkeys(clusters)),
         "matchRate": match_rate,
+        "matchedRequirements": list(matched),
+        "missingRequirements": list(unmatched),
+        "evidenceMatches": [],
+        "roleWeightedScore": 0.0,
+        "uiSections": ["General fit"],
     }
-
-
-def _score_generic_skill_match(jd_skills: List[str], candidate_skills: List[str]) -> Dict[str, Any]:
-    base = _score_skill_match_legacy(jd_skills, candidate_skills)
-    base["matchedRequirements"] = list(base.get("matchedSkills") or [])
-    base["missingRequirements"] = list(base.get("unmatchedSkills") or [])
-    base["evidenceMatches"] = []
-    base["roleWeightedScore"] = 0.0
-    base["uiSections"] = ["General fit"]
-    return base
 
 
 def _score_skill_match(
@@ -1144,90 +1018,6 @@ def _upsert_jd_fit_detail(
     analysis: Dict[str, Any],
     candidate: Dict[str, Any],
     jd_text: str,
-    semantic_match: Dict[str, Any] | None,
-) -> None:
-    detail_index = _find_detail_index(details, JD_FIT_CRITERION_ALIASES)
-    previous_score = 0.0
-    if detail_index is not None:
-        score_text = _get_record_value(details[detail_index], ["Điểm", "Diem", "Score"])
-        previous_score = _parse_detail_score(score_text)[0] or 0.0
-
-    jd_skills = _extract_skills_from_jd(jd_text)
-    candidate_skills = _extract_skills_from_candidate(candidate)
-    skill_match = _score_skill_match(jd_skills, candidate_skills) if jd_skills else {
-        "matchedSkills": [],
-        "unmatchedSkills": [],
-        "transferMatches": [],
-        "familyClusters": [],
-        "matchRate": 0,
-    }
-
-    vector_score = float(semantic_match.get("weightedScore") or 0.0) if semantic_match else 0.0
-    final_score = min(JD_FIT_MAX_SCORE, max(previous_score, vector_score))
-
-    evidence_parts: List[str] = []
-    if skill_match["matchedSkills"]:
-        evidence_parts.append(f"Kỹ năng khớp: {', '.join(skill_match['matchedSkills'][:6])}")
-    if skill_match["transferMatches"]:
-        evidence_parts.append(f"Khớp chuyển đổi: {'; '.join(skill_match['transferMatches'][:3])}")
-    if skill_match["unmatchedSkills"]:
-        evidence_parts.append(f"Còn thiếu: {', '.join(skill_match['unmatchedSkills'][:4])}")
-    if semantic_match:
-        evidence_parts.append(
-            f"Embedding JD/CV {semantic_match['similarity'] * 100:.1f}% ({semantic_match['queryModel']})"
-        )
-    evidence = " | ".join(evidence_parts) or "Chưa có đủ dữ liệu để suy ra phần so khớp JD/CV."
-
-    if semantic_match:
-        explanation = (
-            f"So khớp JD/CV lấy mức cao hơn giữa điểm AI gốc "
-            f"{_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)} và "
-            f"điểm semantic embedding {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}."
-        )
-        formula = (
-            f"max(AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}, "
-            f"Vector semantic {_format_score_value(vector_score)}/{_format_score_value(JD_FIT_MAX_SCORE)})"
-        )
-        candidate["jdCvMatchInsights"] = {
-            "similarity": semantic_match["similarity"],
-            "weightedScore": vector_score,
-            "maxScore": JD_FIT_MAX_SCORE,
-            "queryModel": semantic_match["queryModel"],
-            "matchedSkills": skill_match["matchedSkills"],
-            "missingSkills": skill_match["unmatchedSkills"],
-            "transferMatches": skill_match["transferMatches"],
-        }
-    else:
-        explanation = "Giữ lại điểm Job Fit hiện có vì chưa tạo được semantic embedding ổn định cho JD/CV."
-        formula = f"AI Job Fit {_format_score_value(previous_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}"
-
-    detail_payload = _detail_item(
-        JD_FIT_CRITERION_LABEL,
-        f"{_format_score_value(final_score)}/{_format_score_value(JD_FIT_MAX_SCORE)}",
-        formula,
-        evidence,
-        explanation,
-    )
-    if detail_index is None:
-        details.insert(0, detail_payload)
-    else:
-        details[detail_index] = detail_payload
-
-    current_total = (
-        _parse_numeric_value(_get_analysis_value(analysis, ["Tổng điểm", "Tong diem"]))
-    )
-    if current_total is not None:
-        updated_total = max(0.0, min(100.0, current_total + (final_score - previous_score)))
-        analysis["Tổng điểm"] = round(updated_total, 1)
-        analysis["Tong diem"] = round(updated_total, 1)
-
-
-def _upsert_jd_fit_detail(
-    details: List[Dict[str, Any]],
-    *,
-    analysis: Dict[str, Any],
-    candidate: Dict[str, Any],
-    jd_text: str,
     cv_text: str,
     hard_filters: Dict[str, Any],
     semantic_match: Dict[str, Any] | None,
@@ -1434,9 +1224,6 @@ def enrich_candidates(
             debias_result = _run_debiasing(cv_text, hard_filters)
             if debias_result["warnings"]:
                 candidate["debiasingWarnings"] = debias_result["warnings"]
-
-            for key, val in _analyze_soft_skills(cv_text).items():
-                details.append(_detail_item(key, f"{val['score']}/{val['maxScore']}", "", str(val["reasoning"])[:200], val["reasoning"]))
 
         companies = _extract_companies_from_candidate(candidate)
         if companies:

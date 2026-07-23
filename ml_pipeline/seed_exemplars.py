@@ -9,6 +9,9 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
+from supporthr_ml.contracts import stable_id
+from supporthr_ml.privacy import redact_pii as redact_pii_report
+
 
 SCHEMA_VERSION = "supporthr-exemplar-v2"
 EMBEDDING_MODEL = "gemini-embedding-2"
@@ -22,10 +25,7 @@ def clean(value: Any) -> str:
 
 
 def redact_pii(value: str) -> str:
-    text = re.sub(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b", "[EMAIL]", value)
-    text = re.sub(r"(?:\+?\d[\d\s().-]{7,}\d)", "[PHONE]", text)
-    text = re.sub(r"https?://\S+|www\.\S+", "[URL]", text, flags=re.I)
-    return clean(text)
+    return redact_pii_report(value).text
 
 
 def value(row: dict[str, Any], *aliases: str) -> str:
@@ -37,7 +37,15 @@ def value(row: dict[str, Any], *aliases: str) -> str:
     return ""
 
 
-def records(csv_path: Path, *, status: str, limit: int | None) -> Iterable[dict[str, Any]]:
+def records(
+    csv_path: Path,
+    *,
+    status: str,
+    limit: int | None,
+    source_license: str,
+    reviewer: str,
+    review_reference: str,
+) -> Iterable[dict[str, Any]]:
     with csv_path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
         emitted = 0
         for row_number, row in enumerate(csv.DictReader(handle), start=2):
@@ -45,8 +53,13 @@ def records(csv_path: Path, *, status: str, limit: int | None) -> Iterable[dict[
             jd = value(row, "job_text", "jd_text", "job_description", "jd", "description")
             if not cv or not jd:
                 continue
-            redacted = redact_pii(cv)
-            doc_id = hashlib.sha256(f"{csv_path.name}:{row_number}:{redacted[:500]}:{jd[:500]}".encode()).hexdigest()[:32]
+            cv_redaction = redact_pii_report(cv)
+            jd_redaction = redact_pii_report(jd)
+            if not cv_redaction.safe_for_release or not jd_redaction.safe_for_release:
+                raise ValueError(f"PII remained after redaction at source row {row_number}.")
+            redacted = cv_redaction.text
+            redacted_jd = jd_redaction.text
+            doc_id = stable_id(redacted, redacted_jd, RUBRIC_VERSION)
             yield {
                 "id": doc_id,
                 "schemaVersion": SCHEMA_VERSION,
@@ -58,8 +71,23 @@ def records(csv_path: Path, *, status: str, limit: int | None) -> Iterable[dict[
                 "seniority": clean(value(row, "seniority", "level", "experience_level")) or "unknown",
                 "jobTitle": clean(value(row, "job_title", "position", "role")),
                 "redactedCvText": redacted,
-                "jdSnapshot": clean(jd),
-                "analysisJson": {"source": csv_path.name, "sourceRow": row_number},
+                "jdSnapshot": redacted_jd,
+                "analysisJson": {
+                    "source": csv_path.name,
+                    "sourceRow": row_number,
+                    "sourceLicense": source_license,
+                    "review": {
+                        "reviewer": reviewer,
+                        "reference": review_reference,
+                        "required": status == "approved",
+                    },
+                },
+                "redactionReport": {
+                    "version": cv_redaction.version,
+                    "cvCounts": cv_redaction.counts,
+                    "jdCounts": jd_redaction.counts,
+                    "safeForRelease": True,
+                },
                 "embeddingModel": EMBEDDING_MODEL,
                 "embeddingDimension": EMBEDDING_DIMENSION,
                 "vectorIndexVersion": VECTOR_INDEX_VERSION,
@@ -94,14 +122,40 @@ def main() -> int:
     parser.add_argument("--database-url", default=os.getenv("DATABASE_URL"))
     parser.add_argument("--status", choices=("pending", "approved"), default="pending")
     parser.add_argument("--allow-approved", action="store_true")
+    parser.add_argument("--confirm-reviewed", action="store_true")
+    parser.add_argument("--source-license", default="")
+    parser.add_argument("--reviewer", default="")
+    parser.add_argument("--review-reference", default="")
     parser.add_argument("--with-embeddings", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
-    if args.status == "approved" and not args.allow_approved:
-        raise SystemExit("Direct approval requires --allow-approved after recruiter review.")
+    if not args.dry_run and not args.source_license.strip():
+        raise SystemExit("--source-license is required before records can be seeded.")
+    if args.status == "approved":
+        missing = [
+            flag for flag, present in (
+                ("--allow-approved", args.allow_approved),
+                ("--confirm-reviewed", args.confirm_reviewed),
+                ("--reviewer", bool(args.reviewer.strip())),
+                ("--review-reference", bool(args.review_reference.strip())),
+                ("--source-license", bool(args.source_license.strip())),
+            )
+            if not present
+        ]
+        if missing:
+            raise SystemExit(
+                "Direct approval requires recruiter review evidence; missing: " + ", ".join(missing)
+            )
 
-    iterable: Iterable[dict[str, Any]] = records(Path(args.data_csv).resolve(), status=args.status, limit=args.limit)
+    iterable: Iterable[dict[str, Any]] = records(
+        Path(args.data_csv).resolve(),
+        status=args.status,
+        limit=args.limit,
+        source_license=args.source_license.strip() or "UNREVIEWED-DRY-RUN",
+        reviewer=args.reviewer.strip(),
+        review_reference=args.review_reference.strip(),
+    )
     if args.with_embeddings:
         from google import genai
         key = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY_1")
@@ -144,16 +198,33 @@ def main() -> int:
                     values (%s, %s, %s, 'approvedExemplars', %s, %s, now(), now(),
                             %s, %s, %s, %s, %s, %s::vector)
                     on conflict (id) do update set
-                      payload = excluded.payload,
-                      source_payload = excluded.source_payload,
-                      source_checksum = excluded.source_checksum,
+                      payload = case
+                        when public.approved_exemplars.approved and not excluded.approved
+                        then public.approved_exemplars.payload else excluded.payload end,
+                      source_payload = case
+                        when public.approved_exemplars.approved and not excluded.approved
+                        then public.approved_exemplars.source_payload else excluded.source_payload end,
+                      source_checksum = case
+                        when public.approved_exemplars.approved and not excluded.approved
+                        then public.approved_exemplars.source_checksum else excluded.source_checksum end,
                       updated_at = now(),
-                      status = excluded.status,
-                      approved = excluded.approved,
-                      rubric_version = excluded.rubric_version,
-                      embedding_model = excluded.embedding_model,
-                      vector_index_version = excluded.vector_index_version,
-                      embedding = coalesce(excluded.embedding, public.approved_exemplars.embedding)
+                      status = case
+                        when public.approved_exemplars.approved then public.approved_exemplars.status
+                        else excluded.status end,
+                      approved = public.approved_exemplars.approved or excluded.approved,
+                      rubric_version = case
+                        when public.approved_exemplars.approved and not excluded.approved
+                        then public.approved_exemplars.rubric_version else excluded.rubric_version end,
+                      embedding_model = case
+                        when public.approved_exemplars.approved and not excluded.approved
+                        then public.approved_exemplars.embedding_model else excluded.embedding_model end,
+                      vector_index_version = case
+                        when public.approved_exemplars.approved and not excluded.approved
+                        then public.approved_exemplars.vector_index_version else excluded.vector_index_version end,
+                      embedding = case
+                        when public.approved_exemplars.approved and not excluded.approved
+                        then public.approved_exemplars.embedding
+                        else coalesce(excluded.embedding, public.approved_exemplars.embedding) end
                     """,
                     (
                         doc_id,

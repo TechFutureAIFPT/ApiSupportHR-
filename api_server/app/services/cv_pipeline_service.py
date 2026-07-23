@@ -21,6 +21,7 @@ from app.services.account.cache_service import (
 from app.services.account.history_service import sync_history_entry
 from app.services.analysis_routing_service import build_routing_metadata_async, default_routing_metadata
 from app.services.analysis_grounding_service import build_approved_grounding_context
+from app.services.graph_rag_service import build_graph_rag_context
 from app.services.candidate_enrichment_service import enrich_candidates
 from app.services.cv_analysis_service import (
     analyze_cv_entries_async,
@@ -242,23 +243,6 @@ def _format_routing_metadata_note(metadata: dict[str, Any]) -> str:
     )
 
 
-def _failed_candidate(entry: dict[str, Any], error: Exception) -> dict[str, Any]:
-    file_name = _entry_file_name(entry)
-    return {
-        "fileName": file_name,
-        "candidateName": "",
-        "status": "FAILED",
-        "error": str(error),
-        "analysis": {
-            "Tong diem": 0,
-            "Hang": "C",
-            "Chi tiet": [],
-            "Diem manh CV": [],
-            "Diem yeu CV": [f"Pipeline error: {error}"],
-        },
-    }
-
-
 def _build_job_payload(jd_text: str, hard_filters: dict[str, Any]) -> dict[str, Any]:
     return {
         "position": str(
@@ -450,12 +434,32 @@ async def _prepare_entry_context(
                 "vector_index_version": settings.vector_index_version,
                 "query_vector": query_vector,
             }
+        try:
+            graph_rag_payload = await asyncio.to_thread(
+                build_graph_rag_context,
+                jd_text=jd_text,
+                cv_text=normalized_text,
+                industry_hints=list(grounding_payload.get("industry_hints") or []),
+            )
+        except Exception as error:
+            warnings.append(f"graph_rag_failed:{file_name}:{error}")
+            graph_rag_payload = {
+                "schemaVersion": "supporthr-graph-fact-v1",
+                "enabled": settings.graph_rag_enabled,
+                "shadowMode": settings.graph_rag_shadow_mode,
+                "decisionImpact": "none",
+                "status": "error",
+                "facts": [],
+                "factCount": 0,
+                "retrievalError": str(error),
+            }
 
     return {
         "file_name": file_name,
         "normalized_payload": normalized_payload,
         "routing_metadata": routing_metadata,
         "grounding_payload": grounding_payload,
+        "graph_rag_payload": graph_rag_payload,
         "analysis_text_bundle": build_analysis_text_bundle(normalized_payload),
         "query_vector": query_vector,
         "warnings": warnings,
@@ -488,6 +492,13 @@ async def run_smart_cv_analysis(
         "cacheMisses": 0,
         "geminiCalls": 0,
         "ragMode": {"fewShot": 0, "zeroShot": 0},
+        "graphRag": {
+            "enabled": settings.graph_rag_enabled,
+            "shadowMode": settings.graph_rag_shadow_mode,
+            "decisionImpact": "none",
+            "matchedFacts": 0,
+            "errors": 0,
+        },
         "warnings": [],
         "model": {
             "pipelineVersion": PIPELINE_VERSION,
@@ -584,6 +595,7 @@ async def run_smart_cv_analysis(
             normalized_payload = prepared["normalized_payload"]
             routing_metadata = prepared["routing_metadata"]
             grounding_payload = prepared["grounding_payload"]
+            graph_rag_payload = prepared["graph_rag_payload"]
             analysis_text_bundle = str(prepared["analysis_text_bundle"])
             pipeline["warnings"].extend(prepared["warnings"])
             entry_note_parts = [
@@ -604,6 +616,9 @@ async def run_smart_cv_analysis(
                 pipeline["ragMode"]["fewShot"] += 1
             else:
                 pipeline["ragMode"]["zeroShot"] += 1
+            pipeline["graphRag"]["matchedFacts"] += int(graph_rag_payload.get("factCount") or 0)
+            if graph_rag_payload.get("status") == "error" or graph_rag_payload.get("retrievalError"):
+                pipeline["graphRag"]["errors"] += 1
 
             metadata_by_file[file_key] = {
                 **metadata_by_file.get(file_key, {}),
@@ -622,6 +637,7 @@ async def run_smart_cv_analysis(
                 "ragEmbeddingModel": grounding_payload.get("embedding_model"),
                 "ragEmbeddingDimension": grounding_payload.get("embedding_dimension"),
                 "vectorIndexVersion": grounding_payload.get("vector_index_version"),
+                "graphRag": graph_rag_payload,
                 "preprocessDurationMs": prepared["duration_ms"],
                 "detectedLocation": _infer_location_from_text(raw_text_by_file.get(file_key, "")),
             }

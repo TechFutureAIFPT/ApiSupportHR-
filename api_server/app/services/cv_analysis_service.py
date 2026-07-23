@@ -1220,10 +1220,6 @@ def _build_verdict(raw_score: float, max_score: float) -> str:
     return "missing"
 
 
-def _merge_verdict(primary: str, secondary: str) -> str:
-    return primary if VERDICT_ORDER.get(primary, -1) >= VERDICT_ORDER.get(secondary, -1) else secondary
-
-
 def _build_evidence_quality(
     evidence_text: str,
     evidence_highlights: list[str],

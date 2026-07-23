@@ -39,6 +39,12 @@ class Settings:
                 value = default
             return max(minimum, min(maximum, value))
 
+        def _bool_env(name: str, default: bool = False) -> bool:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+
         self.app_name = os.getenv("APP_NAME", "SupportHR Backend")
         self.maintenance_mode = os.getenv("MAINTENANCE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
         self.database_url = os.getenv("DATABASE_URL", "").strip()
@@ -133,6 +139,10 @@ class Settings:
         self.rag_similarity_threshold = _float_env("RAG_SIMILARITY_THRESHOLD", 0.75)
         self.rag_max_exemplars = max(1, int(_float_env("RAG_MAX_EXEMPLARS", 2)))
         self.rag_candidate_limit = max(10, min(500, int(_float_env("RAG_CANDIDATE_LIMIT", 100))))
+        self.graph_rag_enabled = _bool_env("GRAPH_RAG_ENABLED", False)
+        self.graph_rag_shadow_mode = _bool_env("GRAPH_RAG_SHADOW_MODE", True)
+        self.graph_rag_artifact_path = os.getenv("GRAPH_RAG_ARTIFACT_PATH", "").strip()
+        self.graph_rag_max_facts = _int_env("GRAPH_RAG_MAX_FACTS", 8, 1, 50)
         self.ai_preprocess_concurrency = max(1, min(8, int(_float_env("AI_PREPROCESS_CONCURRENCY", 4))))
         self.require_classifier_ready = os.getenv("REQUIRE_CLASSIFIER_READY", "1").strip().lower() in {
             "1", "true", "yes", "on"

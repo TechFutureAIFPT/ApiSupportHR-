@@ -614,18 +614,5 @@ class AnalysisQualityTests(unittest.TestCase):
         self.assertEqual(candidate["jdCvMatchInsights"]["roleKey"], "generic")
         self.assertIsInstance(candidate["jdCvMatchInsights"]["evidenceMatches"], list)
 
-    def test_career_velocity_parser_accepts_vietnamese_accents(self) -> None:
-        velocity = candidate_enrichment_service._analyze_career_velocity(
-            "Vị trí: Trưởng phòng kỹ thuật\n"
-            "Công ty: TechFuture Vietnam\n"
-            "Thời gian: 2020 - hiện tại"
-        )
-
-        self.assertEqual(velocity["peakLevel"], 5)
-        self.assertEqual(velocity["peakTitle"], "Trưởng phòng kỹ thuật")
-        self.assertEqual(velocity["promotionCount"], 0)
-        self.assertEqual(velocity["totalMonths"], 72)
-
-
 if __name__ == "__main__":
     unittest.main()

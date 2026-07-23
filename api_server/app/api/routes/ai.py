@@ -49,6 +49,7 @@ from app.services.candidate_refinement_service import refine_cv_profile
 from app.services.cv_pipeline_service import run_smart_cv_analysis
 from app.services.file_extraction_service import extract_text_from_upload
 from app.services.gemini_service import embed_text, generate_content
+from app.services.graph_rag_service import get_graph_rag_status
 from app.services.local_classifier_service import classify_cv_text, get_classifier_status
 from app.services.quick_cv_score_service import MAX_CV_COUNT, score_quick_cvs
 from app.services.rubric_service import build_default_rubric, list_rubrics
@@ -403,6 +404,11 @@ def cv_candidate_chat(
 @router.get("/cv/classifier-status", response_model=CvIndustryClassifierStatusResponse)
 def cv_classifier_status() -> CvIndustryClassifierStatusResponse:
     return CvIndustryClassifierStatusResponse(**get_classifier_status())
+
+
+@router.get("/cv/graphrag-status")
+def cv_graph_rag_status() -> dict[str, Any]:
+    return get_graph_rag_status()
 
 
 @router.post("/cv/classify-industry", response_model=CvIndustryClassificationResponse)
