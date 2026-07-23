@@ -14,7 +14,8 @@ def get_postgres_pool() -> Any:
     except ModuleNotFoundError as error:  # pragma: no cover - deployment dependency
         raise RuntimeError("psycopg-pool is required for the Supabase runtime.") from error
 
-    database_url = get_settings().database_url
+    settings = get_settings()
+    database_url = settings.database_url
     if not database_url:
         raise RuntimeError("DATABASE_URL is required for the Supabase runtime.")
     return ConnectionPool(
