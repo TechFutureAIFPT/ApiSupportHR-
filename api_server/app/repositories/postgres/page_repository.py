@@ -22,7 +22,10 @@ def _projection(fields: list[str]) -> tuple[str, list[str]]:
     payload_fields = [field for field in fields if field not in {"id", "source"}]
     if not payload_fields:
         return "'{}'::jsonb", []
-    placeholders = ", ".join("%s, payload -> %s" for _ in payload_fields)
+    # psycopg binds these values as parameters. PostgreSQL cannot infer the
+    # polymorphic jsonb_build_object key type on an empty result set unless the
+    # placeholders are explicitly typed.
+    placeholders = ", ".join("%s::text, payload -> %s::text" for _ in payload_fields)
     parameters = [value for field in payload_fields for value in (field, field)]
     return f"jsonb_strip_nulls(jsonb_build_object({placeholders}))", parameters
 

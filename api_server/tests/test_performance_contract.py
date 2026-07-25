@@ -89,6 +89,7 @@ class PerformanceContractTests(unittest.TestCase):
         self.assertNotIn("select *", fake_cursor.query.lower())
         self.assertTrue(fake_cursor.assert_placeholder_count)
         self.assertIn("jsonb_build_object", fake_cursor.query)
+        self.assertIn("%s::text, payload -> %s::text", fake_cursor.query)
         self.assertIn("order by sort_at desc, id desc", fake_cursor.query.lower())
         self.assertTrue(page.has_more)
         self.assertIsNotNone(page.next_cursor)

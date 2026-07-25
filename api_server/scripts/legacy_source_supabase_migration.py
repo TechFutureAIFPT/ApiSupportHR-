@@ -166,9 +166,33 @@ def _safe_output_path(value: str) -> Path:
 
 
 def _firebase_context():
-    from app.integrations.firebase_admin import get_firebase_app, get_firestore_client
+    from firebase_admin import credentials, firestore, get_app, initialize_app
 
-    return get_firebase_app(), get_firestore_client()
+    app_name = "supporthr-legacy-migration"
+    try:
+        app = get_app(app_name)
+    except ValueError:
+        raw_service_account = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+        if not raw_service_account:
+            raise RuntimeError("FIREBASE_SERVICE_ACCOUNT_JSON is required for legacy-source migration.")
+        try:
+            service_account = json.loads(raw_service_account)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("FIREBASE_SERVICE_ACCOUNT_JSON must be valid JSON.") from error
+
+        options: dict[str, str] = {}
+        database_url = os.getenv("FIREBASE_DATABASE_URL", "").strip()
+        storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET", "").strip()
+        if database_url:
+            options["databaseURL"] = database_url
+        if storage_bucket:
+            options["storageBucket"] = storage_bucket
+        app = initialize_app(
+            credentials.Certificate(service_account),
+            options=options or None,
+            name=app_name,
+        )
+    return app, firestore.client(app=app)
 
 
 def _fetch_rtdb_chatbot(app: Any) -> dict[str, Any]:
