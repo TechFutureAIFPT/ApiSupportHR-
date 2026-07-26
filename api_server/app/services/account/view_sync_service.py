@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.integrations import redis_cache
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account import response_cache_service, sync_state_service
 

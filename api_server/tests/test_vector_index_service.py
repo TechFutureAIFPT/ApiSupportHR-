@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import get_settings
-from app.repositories.postgres import account_repository as account_repo
-from app.repositories.postgres import vector_repository
+from app.repositories.firestore import account_repository as account_repo
+from app.repositories.firestore import vector_repository
 from app.schemas.account import AuthenticatedUser
 from app.services import vector_index_service
 from app.services.account import uploaded_file_service

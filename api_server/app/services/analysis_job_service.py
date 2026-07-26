@@ -12,7 +12,7 @@ from fastapi import HTTPException, status
 
 from app.core.config import get_settings
 from app.integrations import redis_cache
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.shared import serialize
 from app.services.cv_pipeline_service import run_smart_cv_analysis
@@ -86,8 +86,8 @@ def _persist_job_snapshot(record: JobRecord) -> None:
             },
             merge=True,
         )
-    except Exception as error:  # pragma: no cover - Supabase availability depends on runtime config
-        print(f"[AnalysisJob] Supabase snapshot skipped for {record['job_id']}: {error}")
+    except Exception as error:  # pragma: no cover - Firebase availability depends on runtime config
+        print(f"[AnalysisJob] Firestore snapshot skipped for {record['job_id']}: {error}")
 
 
 def _persist_job_record(record: JobRecord) -> bool:
@@ -105,7 +105,7 @@ def _persist_job_record(record: JobRecord) -> bool:
     return redis_saved
 
 
-def _record_from_supabase(job_id: str) -> JobRecord | None:
+def _record_from_firestore(job_id: str) -> JobRecord | None:
     try:
         document = repo.get_document(repo.analysis_jobs(), job_id)
         if not document.exists:
@@ -124,7 +124,7 @@ def _record_from_supabase(job_id: str) -> JobRecord | None:
             "created_at": data.get("createdAt"),
             "updated_at": data.get("updatedAt"),
         }
-    except Exception:  # pragma: no cover - Supabase availability depends on runtime config
+    except Exception:  # pragma: no cover - Firebase availability depends on runtime config
         return None
 
 
@@ -137,7 +137,7 @@ def _load_job_record(job_id: str) -> JobRecord | None:
     cached = redis_cache.get_json(_job_cache_key(job_id))
     if isinstance(cached, dict):
         return copy.deepcopy(cached)
-    return _record_from_supabase(job_id)
+    return _record_from_firestore(job_id)
 
 
 def _set_job(job_id: str, **updates: Any) -> JobRecord:

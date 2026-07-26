@@ -19,16 +19,28 @@ services:
         value: "false"
       - key: FRONTEND_ORIGIN
         sync: false
-      - key: SUPABASE_URL
+      - key: FIREBASE_PROJECT_ID
         sync: false
-      - key: SUPABASE_JWT_AUDIENCE
-        value: authenticated
-      - key: SUPABASE_JWT_ISSUER
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
-      - key: SUPABASE_JWKS_URL
+      - key: FIREBASE_WEB_API_KEY
         sync: false
-      - key: DATABASE_URL
+      - key: FIREBASE_AUTH_DOMAIN
         sync: false
+      - key: FIREBASE_DATABASE_URL
+        sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: FIREBASE_APP_ID
+        sync: false
+      - key: FIREBASE_MEASUREMENT_ID
+        sync: false
+      - key: FIREBASE_APPCHECK_SITE_KEY
+        sync: false
+      - key: FIREBASE_APPCHECK_ENFORCE
+        value: "false"
       - key: DATA_ENCRYPTION_KEY
         sync: false
       - key: GEMINI_API_KEY_1
@@ -65,10 +77,6 @@ services:
         value: local
       - key: REQUIRE_CLASSIFIER_READY
         value: "true"
-      - key: POSTGRES_POOL_MIN_SIZE
-        value: "1"
-      - key: POSTGRES_POOL_MAX_SIZE
-        value: "5"
       - key: AI_PREPROCESS_CONCURRENCY
         value: "1"
       - key: RAG_CANDIDATE_LIMIT

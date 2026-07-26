@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Iterable
 
 
-logger = logging.getLogger("app.supabase.optimized_docs")
+logger = logging.getLogger("app.firestore.optimized_docs")
 
 
 def to_millis(value: Any) -> int:
@@ -31,7 +31,7 @@ def sorted_docs(docs: Iterable[Any], field_name: str, reverse: bool = True) -> l
 
 
 def optimized_docs(collection_ref: Any, uid: str, limit_count: int, timestamp_field: str = "timestamp") -> list[Any]:
-    """Fetch docs using PostgreSQL ORDER BY + LIMIT, with a bounded compatibility fallback."""
+    """Fetch docs using Firestore ORDER BY + LIMIT, with a bounded compatibility fallback."""
     try:
         return list(
             collection_ref.where("uid", "==", uid)

@@ -5,7 +5,7 @@ import re
 from typing import Any
 import unicodedata
 
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account import response_cache_service, view_sync_service
 from app.services.account.shared import fast_cleanup, optimized_docs, serialize, sorted_docs, to_millis
@@ -512,7 +512,7 @@ def _build_mobile_inbox_payload(
 def build_mobile_inbox_view_document(user: AuthenticatedUser, user_email: str | None = None) -> dict[str, Any]:
     # candidate_limit=160 khớp mức tối đa FE thực sự yêu cầu (CVScreenerWelcome/FilteredCvLibraryPage
     # dùng candidateLimit=160) — trước đây 200 vượt nhu cầu thật, tốn thêm nén Python + kích thước
-    # Tránh ghi document PostgreSQL không cần thiết.
+    # Tránh ghi document Firestore không cần thiết.
     payload = _build_mobile_inbox_payload(user, history_limit=50, candidate_limit=160, user_email=user_email)
     return {
         "uid": user.uid,

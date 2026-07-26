@@ -20,7 +20,7 @@ Create an Ubuntu VPS and a DNS `A` record such as `backend.supporthr-tf.com.vn` 
 - TCP `80` and `443`.
 - Do not expose Redis `6379`, Kubernetes API `6443`, or backend `8000`.
 
-Keep the private SSH key, Supabase credentials, Gemini keys and GHCR token out of Git and chat.
+Keep the private SSH key, Firebase Admin credentials, Gemini keys and GHCR token out of Git and chat.
 
 ## 2. Bootstrap K3s
 
@@ -118,11 +118,11 @@ kubectl -n supporthr-oci logs deployment/supporthr-worker --tail=200
 Delete Render only after the K3s endpoint passes:
 
 - HTTPS `/health/live` and `/health/ready`.
-- Supabase sign-in, profile, history and JD templates.
+- Firebase sign-in, profile, history and JD templates.
 - Upload/OCR, chatbot, feedback and GraphRAG.
 - Asynchronous analysis completed by the worker.
 - Redis persistence after pod restart.
 - A tested rollback to the previous immutable image.
 - Frontend and Android API URLs switched to the VPS domain.
 
-A single VPS remains one failure domain. Supabase is the system of record; Redis contains queue/cache state and its PVC must not be treated as a database backup.
+A single VPS remains one failure domain. Firebase is the system of record; Redis contains queue/cache state and its PVC must not be treated as a database backup.

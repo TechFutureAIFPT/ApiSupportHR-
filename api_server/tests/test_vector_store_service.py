@@ -5,7 +5,7 @@ import unittest
 from typing import Any
 
 from app.core.config import get_settings
-from app.repositories.postgres import vector_repository as repo
+from app.repositories.firestore import vector_repository as repo
 from app.services import candidate_enrichment_service, vector_store_service
 
 
@@ -71,7 +71,7 @@ class VectorStoreServiceTests(unittest.TestCase):
 
     def test_candidate_enrichment_similarity_uses_vector_store_result(self) -> None:
         candidate_enrichment_service.search_similar_records = lambda industry, cv_text, top_k=3, min_similarity=0.0, owner_uid=None, exclude_file_names=None, query_vector=None: {
-            "provider": "supabase",
+            "provider": "firestore",
             "collectionKey": "it",
             "queryModel": "gemini-embedding-001",
             "recordCount": 4,
@@ -85,7 +85,7 @@ class VectorStoreServiceTests(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["industry"], "it")
-        self.assertEqual(result["provider"], "supabase")
+        self.assertEqual(result["provider"], "firestore")
         self.assertEqual(result["collectionKey"], "it")
         self.assertEqual(result["queryModel"], "gemini-embedding-001")
         self.assertEqual(result["recordCount"], 4)
@@ -149,7 +149,7 @@ class VectorStoreServiceTests(unittest.TestCase):
         self.assertAlmostEqual(candidate["jdCvMatchInsights"]["similarity"], 1.0)
         self.assertEqual(candidate["jdCvMatchInsights"]["weightedScore"], 20.0)
 
-    def test_search_similar_records_from_supabase_honors_owner_uid(self) -> None:
+    def test_search_similar_records_from_firestore_honors_owner_uid(self) -> None:
         fake_vectors = FakeCollection()
         fake_vectors.store["uploaded-file-1"] = {
             "id": "uploaded-file-1",
@@ -183,17 +183,17 @@ class VectorStoreServiceTests(unittest.TestCase):
             "it",
             "Python FastAPI backend",
             top_k=3,
-            provider="supabase",
+            provider="firestore",
             owner_uid="user-123",
         )
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result["provider"], "supabase")
+        self.assertEqual(result["provider"], "firestore")
         self.assertEqual(result["recordCount"], 1)
         self.assertEqual(result["topMatches"][0]["id"], "uploaded-file-1")
 
-    def test_search_similar_records_from_supabase_excludes_same_file_name(self) -> None:
+    def test_search_similar_records_from_firestore_excludes_same_file_name(self) -> None:
         fake_vectors = FakeCollection()
         fake_vectors.store["uploaded-file-1"] = {
             "id": "uploaded-file-1",
@@ -226,7 +226,7 @@ class VectorStoreServiceTests(unittest.TestCase):
         result = vector_store_service.search_similar_records(
             "it",
             "Python FastAPI backend",
-            provider="supabase",
+            provider="firestore",
             owner_uid="user-123",
             exclude_file_names=["same-file.pdf"],
         )

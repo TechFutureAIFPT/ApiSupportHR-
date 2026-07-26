@@ -4,8 +4,9 @@ Các file trong thư mục `docs` mô tả đúng những gì backend đang làm
 
 Mỗi thư mục con đại diện cho một mảng chức năng, và mỗi mảng có một file `README.md` riêng:
 
+- `FE-API-CONTRACT.md`: hợp đồng chức năng, endpoint, auth, workflow và rules để sinh Frontend đúng với Backend
 - `query-cache`: cơ chế cache kết quả phân tích theo người dùng và `cacheKey`
-- `supabase-db`: mô hình dữ liệu PostgreSQL và các bảng đang được dùng
+- `firestore-db`: mô hình dữ liệu Cloud Firestore và các bảng đang được dùng
 - `vector-embeddings`: phần embedding, cosine similarity, và "vector DB" hiện tại
 - `matching-scoring`: logic so khớp CV/JD và cộng trừ điểm sau phân tích AI
 - `file-extraction-ocr`: luồng upload file, trích xuất text, OCR
@@ -45,7 +46,7 @@ flowchart LR
             RAI["routes_ai.py"]
             RF["routes_files.py"]
             RAC["routes_account.py"]
-            DEPS["deps.py<br/>Supabase Bearer token auth"]
+            DEPS["deps.py<br/>Firebase Bearer ID token auth"]
         end
 
         subgraph SVC["Service Layer"]
@@ -59,8 +60,8 @@ flowchart LR
         end
 
         subgraph DATA["Data / Integration Layer"]
-            FBADM["integrations/supabase_auth.py"]
-            REPO["repositories/postgres/account_repository.py"]
+            FBADM["integrations/auth_provider.py"]
+            REPO["repositories/firestore/account_repository.py"]
         end
     end
 
@@ -68,8 +69,8 @@ flowchart LR
         GEM["Google Gemini API"]
         GDRV["Google Drive API"]
         GAUTH["Google OAuth 2.0 / UserInfo"]
-        FBAUTH["Supabase Auth"]
-        FSTORE["Supabase PostgreSQL"]
+        FBAUTH["Firebase Authentication"]
+        FSTORE["Cloud Firestore"]
     end
 
     FE --> MAIN
@@ -111,7 +112,7 @@ flowchart LR
 - `routes_ai.py` xử lý các nghiệp vụ AI.
 - `routes_files.py` phục vụ trích text/OCR.
 - `routes_account.py` phục vụ tất cả dữ liệu theo user, đồng bộ, lịch sử, Google Drive.
-- Supabase được dùng cho xác thực và PostgreSQL được dùng làm database chính.
+- Firebase được dùng cho xác thực và Cloud Firestore được dùng làm database chính.
 - Gemini được dùng cho generate, OCR vision và embedding.
 
 ### 2. Kiến trúc nội bộ backend
@@ -154,9 +155,9 @@ flowchart TB
 
     subgraph STORAGE["Storage / Providers"]
         CFG["core/config.py"]
-        FB2["integrations/supabase_auth.py"]
-        REP2["repositories/postgres/account_repository.py"]
-        FS["Supabase PostgreSQL"]
+        FB2["integrations/auth_provider.py"]
+        REP2["repositories/firestore/account_repository.py"]
+        FS["Cloud Firestore"]
         GM2["Gemini API"]
         GD2["Google Drive API"]
         GO2["Google OAuth"]
@@ -295,7 +296,7 @@ sequenceDiagram
     participant FE as Frontend
     participant RA as routes_account.py
     participant GD as google_drive_service.py
-    participant FS as PostgreSQL
+    participant FS as Cloud Firestore
     participant GO as Google OAuth
     participant GAPI as Google Drive API
     participant FX as file_extraction_service.py
@@ -344,7 +345,7 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A1["Frontend gửi Bearer token"] --> A2["deps.py -> get_current_user()"]
-    A2 --> A3["supabase_auth.verify_supabase_token()"]
+    A2 --> A3["auth_provider.verify_access_token()"]
     A3 --> A4["AuthenticatedUser"]
 
     A4 --> B1["routes_account.py"]
@@ -367,7 +368,7 @@ flowchart TD
     B8 --> C8["googleDriveConnections"]
     B8 --> C9["googleDriveOAuthStates"]
 
-    subgraph FIRE["Supabase PostgreSQL"]
+    subgraph FIRE["Cloud Firestore"]
         C1
         C2
         C3
@@ -382,7 +383,7 @@ flowchart TD
 
 Ý nghĩa:
 
-- Mọi route account quan trọng đều đi qua `deps.py` để xác thực Supabase token.
+- Mọi route account quan trọng đều đi qua `deps.py` để xác thực Firebase ID token.
 - Tất cả dữ liệu quan trọng đều được tách collection theo nghiệp vụ.
 - `cache`, `history`, `uploaded files`, `templates`, `chatbot`, `Drive connection` là các kho dữ liệu độc lập nhưng đều gắn với `uid`.
 
@@ -399,7 +400,7 @@ backend/
 │  ├─ core/
 │  │  └─ config.py
 │  ├─ integrations/
-│  │  └─ supabase_auth.py
+│  │  └─ auth_provider.py
 │  ├─ repositories/
 │  │  └─ postgres/
 │  │     └─ account_repository.py
@@ -449,25 +450,25 @@ Tầng route nhận request và trả response.
 - `routes_ai.py`: các API AI, JD workflow, CV workflow, interview questions
 - `routes_files.py`: upload file và trích text
 - `routes_account.py`: profile, cache, history, uploaded files, chatbot, Google Drive
-- `deps.py`: lấy user hiện tại từ Supabase token
+- `deps.py`: lấy user hiện tại từ Firebase ID token
 
 ### `app/core`
 
 Chứa cấu hình dùng chung của hệ thống.
 
-- `config.py`: đọc biến môi trường, model Gemini, Supabase config, Google OAuth config
+- `config.py`: đọc biến môi trường, model Gemini, Firebase config, Google OAuth config
 
 ### `app/integrations`
 
 Tầng kết nối dịch vụ ngoài ở mức thấp.
 
-- `supabase_auth.py`: xác minh Supabase JWT bằng JWKS, issuer, audience và thời hạn token
+- `auth_provider.py`: xác minh Firebase JWT bằng JWKS, issuer, audience và thời hạn token
 
 ### `app/repositories`
 
 Tầng truy cập dữ liệu.
 
-- `postgres/account_repository.py`: truy cập các bảng nghiệp vụ trong PostgreSQL qua connection pool
+- `firestore/account_repository.py`: truy cập các bảng nghiệp vụ trong Cloud Firestore qua Firebase Admin client
 
 ### `app/schemas`
 
@@ -509,7 +510,7 @@ Client
 -> Dependency Auth (nếu có)
 -> Service
 -> Repository / Integration
--> PostgreSQL hoặc Google/Gemini
+-> Cloud Firestore hoặc Google/Gemini
 -> Response Schema
 -> Client
 ```
@@ -517,13 +518,13 @@ Client
 Ví dụ:
 
 - phân tích CV: `routes_ai.py -> cv_analysis_service.py -> gemini_service.py`
-- lấy cache user: `routes_account.py -> cache_service.py -> account_repository.py -> PostgreSQL`
+- lấy cache user: `routes_account.py -> cache_service.py -> account_repository.py -> Cloud Firestore`
 - import từ Google Drive: `routes_account.py -> google_drive_service.py -> Google Drive API -> file_extraction_service.py`
 
 ## Gợi ý đọc nhanh
 
 - Nếu bạn muốn hiểu cache: đọc `query-cache/README.md`
-- Nếu bạn muốn hiểu database: đọc `supabase-db/README.md`
+- Nếu bạn muốn hiểu database: đọc `firestore-db/README.md`
 - Nếu bạn muốn hiểu "vector DB" và so khớp embedding: đọc `vector-embeddings/README.md`
 - Nếu bạn muốn hiểu cách chấm điểm ứng viên: đọc `matching-scoring/README.md`
 - Nếu bạn muốn hiểu luồng import CV/JD: đọc `file-extraction-ocr/README.md` và `google-drive-import/README.md`

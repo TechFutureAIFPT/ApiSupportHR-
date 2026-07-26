@@ -6,7 +6,7 @@ from typing import Any
 
 from app.core.ai_contract import is_current_vector_contract
 from app.core.config import get_settings
-from app.repositories.postgres import vector_repository as repo
+from app.repositories.firestore import vector_repository as repo
 from app.services.gemini_service import embed_text
 
 
@@ -84,7 +84,7 @@ def clear_vector_store_cache() -> None:
     return None
 
 
-def _load_supabase_records(
+def _load_firestore_records(
     collection_key: str,
     collection_name: str,
     *,
@@ -121,13 +121,13 @@ def _load_collection_records(
     exclude_file_names: set[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     settings = get_settings()
-    records = _load_supabase_records(
+    records = _load_firestore_records(
         collection_key,
         settings.vector_store_collection,
         owner_uid=owner_uid,
         exclude_file_names=exclude_file_names,
     )
-    return "supabase", records
+    return "firestore", records
 
 
 def search_similar_records(

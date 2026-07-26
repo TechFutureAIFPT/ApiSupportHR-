@@ -6,7 +6,7 @@ Accepted - 2026-07-22
 
 ## Context
 
-The first async CV endpoint used `asyncio.create_task` inside the API process. PostgreSQL snapshots made job
+The first async CV endpoint used `asyncio.create_task` inside the API process. Cloud Firestore snapshots made job
 status visible, but did not keep execution alive across a restart and per-user concurrency limits were local
 to one process. That design cannot safely support multiple API replicas.
 
@@ -14,7 +14,7 @@ to one process. That design cannot safely support multiple API replicas.
 
 - Keep FastAPI pods stateless for HTTP traffic.
 - Put analysis jobs in a Redis Stream and process them through a consumer group.
-- Store short-lived internal payload/state in Redis and authenticated audit snapshots in PostgreSQL.
+- Store short-lived internal payload/state in Redis and authenticated audit snapshots in Cloud Firestore.
 - Acknowledge a stream message only after the worker finishes handling it.
 - Reclaim pending messages after the configured idle lease so another worker can recover abandoned work.
 - Enforce per-user concurrent-job slots in Redis with expiring leases.
@@ -33,4 +33,4 @@ and response fields.
 - Redis is now required for the horizontally scaled job path.
 - Redis Streams provide at-least-once delivery, so downstream writes must remain idempotent.
 - CPU/memory HPA is a baseline. Queue-depth autoscaling requires KEDA or an external metrics adapter.
-- PostgreSQL remains the record system; this change does not introduce a relational transaction boundary.
+- Cloud Firestore remains the record system; this change does not introduce a relational transaction boundary.

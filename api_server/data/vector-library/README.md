@@ -37,14 +37,14 @@ Cau truc file:
 }
 ```
 
-Supabase runtime hien tai hoat dong theo 2 bang:
+Firebase runtime hien tai hoat dong theo 2 bang:
 
-- `vector_library_records`: bang pgvector chinh cho semantic search
+- `vector_library_records`: bang Firestore vector search chinh cho semantic search
 - `uploaded_files`: du lieu goc, duoc backend tu dong embed va dong bo sang `vector_library_records`
 
 Luot sync hien tai:
 
-- Khi luu `uploaded_files` co `file_type=cv`, backend thu embed va tao record PostgreSQL
+- Khi luu `uploaded_files` co `file_type=cv`, backend thu embed va tao record Cloud Firestore
 - Record duoc gan `metadata.ownerUid` de `/api/cv/enrich` chi tim trong thu vien vector cua dung user dang goi API
 - Neu can backfill du lieu cu, goi:
 

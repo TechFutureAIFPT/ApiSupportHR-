@@ -5,13 +5,13 @@ import logging
 from typing import Any
 
 from app.integrations import redis_cache
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account import view_sync_service
 from app.services.account.shared import serialize, sorted_docs
 
 
-logger = logging.getLogger("app.supabase.feedback")
+logger = logging.getLogger("app.firestore.feedback")
 
 POSITIVE_ACTIONS = {"like", "shortlist", "interview", "hire"}
 NEGATIVE_ACTIONS = {"dislike", "reject"}

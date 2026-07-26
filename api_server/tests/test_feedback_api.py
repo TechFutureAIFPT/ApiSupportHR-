@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user
 from app.api.routes.account.history import router as history_router
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 
 

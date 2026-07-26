@@ -48,7 +48,7 @@ Backend:
 - resolve `redirectUri`
 - kiểm tra origin có nằm trong allowlist hay không
 - sinh `state`
-- lưu `state` vào PostgreSQL
+- lưu `state` vào Cloud Firestore
 
 State hiện có TTL:
 

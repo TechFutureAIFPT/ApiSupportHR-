@@ -47,7 +47,7 @@ Lưu lịch sử chấm CV nhanh trên app mobile.
       "score": 88,
       "rank": "A",
       "summary": "Ứng viên phù hợp tốt với JD.",
-      "strengths": ["Python", "FastAPI", "PostgreSQL"],
+      "strengths": ["Python", "FastAPI", "Cloud Firestore"],
       "weaknesses": ["Chưa thấy kinh nghiệm cloud rõ ràng"],
       "improvements": ["Cần hỏi thêm về triển khai production"],
       "matchedKeywords": ["FastAPI", "SQL", "REST API"],
@@ -152,7 +152,7 @@ Lưu lịch sử chuẩn hóa JD trên app mobile.
       "location": "Hà Nội",
       "salary": "15-25 triệu",
       "applicationInfo": "Gửi CV về hr@company.com",
-      "keywords": ["Backend", "FastAPI", "PostgreSQL"]
+      "keywords": ["Backend", "FastAPI", "Cloud Firestore"]
     }
   },
 

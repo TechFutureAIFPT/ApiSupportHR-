@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.ai_contract import PIPELINE_VERSION
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account import view_sync_service
 from app.services.account.shared import fast_cleanup, optimized_docs, serialize, sorted_docs

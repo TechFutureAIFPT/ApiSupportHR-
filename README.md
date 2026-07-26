@@ -24,9 +24,9 @@ SupportHR biến JD và CV thành một pipeline có cấu trúc. Hệ thống h
 | Chấm điểm | Rubric, trọng số, rule kiểm tra và Gemini output có schema |
 | Giải thích | Điểm mạnh, điểm yếu, cảnh báo và bằng chứng từ CV |
 | Phân loại ngành | Model TF-IDF + LinearSVC/Logistic Regression được đóng gói kèm manifest |
-| RAG | PostgreSQL/pgvector tìm exemplar đã được phê duyệt |
+| RAG | Cloud Firestore vector search tìm exemplar đã được phê duyệt |
 | GraphRAG | Chỉ đọc fact đã duyệt, có provenance và `decisionImpact=none` |
-| Dữ liệu người dùng | Supabase Auth, PostgreSQL, ownership theo người dùng |
+| Dữ liệu người dùng | Firebase Authentication, Cloud Firestore, ownership theo người dùng |
 | Tích hợp | Google Drive, email, chatbot, notification và salary analysis |
 | Vận hành | Docker Compose, K3s/Kubernetes, health check, rollback và CI build image |
 
@@ -35,7 +35,7 @@ SupportHR biến JD và CV thành một pipeline có cấu trúc. Hệ thống h
 SupportHR không gửi toàn bộ CV vào một prompt rồi tin trực tiếp vào câu trả lời. Các trách nhiệm được tách thành những contract độc lập:
 
 1. **Classifier đã huấn luyện** chỉ hỗ trợ routing/ngành nghề.
-2. **RAG/pgvector** chỉ truy xuất exemplar đã được phê duyệt.
+2. **RAG/vector search** chỉ truy xuất exemplar đã được phê duyệt.
 3. **GraphRAG** cung cấp bằng chứng tham khảo; chế độ shadow không thay đổi điểm.
 4. **Gemini** xử lý phần suy luận ngôn ngữ theo schema.
 5. **Rule và scoring xác định** kiểm tra, sửa và chuẩn hóa kết quả.
@@ -48,16 +48,16 @@ Thiết kế này giúp kiểm thử từng lớp, giảm phụ thuộc vào m�
 ```mermaid
 flowchart LR
     CLIENT["Web / Mobile client"] --> API["FastAPI API"]
-    API --> AUTH["Supabase JWT/JWKS"]
+    API --> AUTH["Firebase ID token verification"]
     API --> FILE["Extraction / OCR"]
     API --> REDIS["Redis queue + cache"]
     REDIS --> WORKER["Analysis worker"]
     WORKER --> CLS["CV classifier"]
-    WORKER --> RAG["PostgreSQL / pgvector RAG"]
+    WORKER --> RAG["Cloud Firestore vector search RAG"]
     WORKER --> GRAPH["Approved GraphRAG facts"]
     WORKER --> GEMINI["Gemini services"]
     WORKER --> SCORE["Deterministic scoring + repair"]
-    SCORE --> DB["Supabase PostgreSQL"]
+    SCORE --> DB["Cloud Firestore"]
     API --> DB
     API --> DRIVE["Google Drive"]
 ```
@@ -72,7 +72,7 @@ JD + CV
   -> Gemini structured analysis
   -> deterministic validation/scoring
   -> ranking + HR summary + evidence
-  -> PostgreSQL history/feedback
+  -> Cloud Firestore history/feedback
 ```
 
 ## 5. Cấu trúc repository
@@ -84,8 +84,8 @@ Web/BE/
 │  │  ├─ api/routes/       HTTP endpoints
 │  │  ├─ schemas/          Pydantic request/response
 │  │  ├─ services/         AI, OCR, scoring và workflow
-│  │  ├─ repositories/     PostgreSQL data access
-│  │  ├─ integrations/     Supabase, PostgreSQL, Redis
+│  │  ├─ repositories/     Firestore data access
+│  │  ├─ integrations/     Firebase Admin, Gemini, Redis
 │  │  ├─ models/           Classifier artifact + manifest
 │  │  └─ main.py           FastAPI entrypoint
 │  ├─ data/graphrag/       Graph artifact đã qua release gate
@@ -93,7 +93,7 @@ Web/BE/
 │  ├─ Dockerfile
 │  └─ requirements.txt
 ├─ ml_pipeline/            Pipeline dữ liệu/huấn luyện chạy offline
-├─ supabase/migrations/    Schema và performance indexes
+├─ Project-Rules/firebase/ Firestore rules và indexes (workspace shared)
 ├─ deploy/kubernetes/      Base + local/OCI/production overlays
 ├─ deploy/vps/             Bootstrap, deploy, health và rollback
 ├─ docker-compose.yml      Local: API + Redis + worker
@@ -108,8 +108,9 @@ Các điểm vào nên xem:
 - [CV pipeline](api_server/app/services/cv_pipeline_service.py)
 - [GraphRAG service](api_server/app/services/graph_rag_service.py)
 - [Classifier service](api_server/app/services/local_classifier_service.py)
-- [PostgreSQL repositories](api_server/app/repositories)
+- [Firestore repositories](api_server/app/repositories/firestore)
 - [Backend tests](api_server/tests)
+- [FE API contract](api_server/docs/FE-API-CONTRACT.md)
 - [ML pipeline](ml_pipeline/README.md)
 - [Kubernetes/K3s](deploy/kubernetes/README.md)
 - [VPS operations](deploy/vps/README.md)
@@ -161,15 +162,13 @@ Yêu cầu:
 
 - Docker Desktop hoặc Docker Engine có Compose;
 - file `api_server/.env` tạo từ `api_server/.env.example`;
-- Supabase/PostgreSQL và Gemini credentials hợp lệ.
+- Firebase/Firestore và Gemini credentials hợp lệ.
 
 Các biến tối thiểu cần cấu hình:
 
 ```env
-SUPABASE_URL=
-SUPABASE_JWT_ISSUER=
-SUPABASE_JWKS_URL=
-DATABASE_URL=
+FIREBASE_PROJECT_ID=
+FIREBASE_SERVICE_ACCOUNT_JSON=
 DATA_ENCRYPTION_KEY=
 GEMINI_API_KEY_1=
 ```
@@ -191,7 +190,7 @@ curl http://localhost:8000/health/ready
 ```
 
 - `live = 200` xác nhận process API đang chạy.
-- `ready = 200` xác nhận classifier, Redis và PostgreSQL đều sẵn sàng.
+- `ready = 200` xác nhận classifier, Redis và Cloud Firestore đều sẵn sàng.
 
 Tắt local:
 
@@ -217,14 +216,14 @@ cd ml_pipeline
 python -m unittest discover -s tests
 ```
 
-Các nhóm test bao phủ API/security, schema, scoring, PostgreSQL, classifier, GraphRAG và data deduplication.
+Các nhóm test bao phủ API/security, schema, scoring, Cloud Firestore, classifier, GraphRAG và data deduplication.
 
 ## 10. Bảo mật và trách nhiệm
 
 - Secret chỉ tồn tại ở backend/runtime secret store.
-- Backend xác minh Supabase Bearer token và ownership.
+- Backend xác minh Firebase Bearer ID token và ownership.
 - CV, JD, email, số điện thoại và token không được ghi vào telemetry đầy đủ.
-- PostgreSQL query được đặt timeout và dùng connection pool.
+- Cloud Firestore query được đặt timeout và dùng Firebase Admin client.
 - Redis hỗ trợ queue, cache và distributed rate limit.
 - GraphRAG chỉ chấp nhận artifact `approved`, có reviewer và source checksum.
 - Kết quả AI luôn là thông tin hỗ trợ; HR phải kiểm tra bằng chứng trước quyết định.
@@ -241,7 +240,7 @@ Các nhóm test bao phủ API/security, schema, scoring, PostgreSQL, classifier,
 
 ## 12. Giới hạn hiện tại
 
-- Phân tích đầy đủ cần Supabase/PostgreSQL và Gemini credentials.
+- Phân tích đầy đủ cần Firebase/Firestore và Gemini credentials.
 - GraphRAG đang ở hướng shadow/advisory; không tác động scoring.
 - Dataset bị quarantine hoặc evaluation-only không được dùng để train.
 - Model candidate không vượt quality gate sẽ không được phát hành.

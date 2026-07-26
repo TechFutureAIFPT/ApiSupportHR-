@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
-from app.integrations.postgres import get_postgres_pool
-from app.repositories.postgres.document_store import PostgresDocumentDatabase
+try:
+    from firebase_admin import firestore
+except ModuleNotFoundError:  # pragma: no cover - optional in isolated tests.
+    firestore = None  # type: ignore[assignment]
+
+from app.integrations.firebase_admin import get_firestore_client
 
 
 USERS_COLLECTION = "users"
@@ -29,12 +33,14 @@ MOBILE_INBOX_VIEW_COLLECTION = "mobileInboxViews"
 USER_SYNC_STATE_COLLECTION = "userSyncState"
 
 
-def db() -> PostgresDocumentDatabase:
-    return PostgresDocumentDatabase()
+def db():
+    return get_firestore_client()
 
 
-def server_timestamp() -> datetime:
-    return datetime.now(timezone.utc)
+def server_timestamp():
+    if firestore is None:
+        raise RuntimeError("Firebase Admin SDK chưa được cài đặt.")
+    return firestore.SERVER_TIMESTAMP
 
 
 def users():
@@ -129,29 +135,31 @@ def set_document(collection_ref, document_id: str, payload: dict[str, Any], merg
     collection_ref.document(document_id).set(payload, merge=merge)
 
 
+def _count(collection_ref, owner_id: str) -> int:
+    result = collection_ref.where("uid", "==", owner_id).count().get()
+    return int(result[0][0].value) if result else 0
+
+
+def _millis(value: Any) -> int | None:
+    if isinstance(value, datetime):
+        return int(value.timestamp() * 1000)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return None
+
+
 def get_sync_stats(owner_id: str) -> dict[str, Any]:
-    """Return all account sync counters and the latest timestamp in one query."""
-    with get_postgres_pool().connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                select
-                  (select count(*) from public.synced_analysis_cache where owner_id = %s::uuid),
-                  (select count(*) from public.synced_analysis_history where owner_id = %s::uuid),
-                  (select count(*) from public.analysis_feedback where owner_id = %s::uuid),
-                  (select coalesce(source_updated_at, updated_at)
-                   from public.synced_analysis_history
-                   where owner_id = %s::uuid
-                   order by coalesce(source_updated_at, updated_at) desc, id desc
-                   limit 1)
-                """,
-                (owner_id, owner_id, owner_id, owner_id),
-            )
-            row = cursor.fetchone() or (0, 0, 0, None)
-    latest = row[3]
+    latest_docs = list(
+        synced_history()
+        .where("uid", "==", owner_id)
+        .order_by("timestamp", direction="DESCENDING")
+        .limit(1)
+        .stream()
+    )
+    latest = _millis((latest_docs[0].to_dict() or {}).get("timestamp")) if latest_docs else None
     return {
-        "cacheEntries": int(row[0] or 0),
-        "historyEntries": int(row[1] or 0),
-        "feedbackEntries": int(row[2] or 0),
-        "lastSyncTime": int(latest.timestamp() * 1000) if isinstance(latest, datetime) else None,
+        "cacheEntries": _count(synced_cache(), owner_id),
+        "historyEntries": _count(synced_history(), owner_id),
+        "feedbackEntries": _count(analysis_feedback(), owner_id),
+        "lastSyncTime": latest,
     }

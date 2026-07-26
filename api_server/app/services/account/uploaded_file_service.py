@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 
 from app.integrations import redis_cache
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.persistence_service import save_file_extraction
 from app.services.account.shared import fast_cleanup, serialize, sorted_docs
 from app.services import vector_index_service
 
 
-logger = logging.getLogger("app.supabase.uploaded_files")
+logger = logging.getLogger("app.firestore.uploaded_files")
 
 MAX_FILES_PER_USER = 500
 MAX_EXTRACTED_TEXT_LENGTH = 10000
@@ -87,7 +87,7 @@ def _query_uploaded_files(
     session_id: str | None = None,
     limit_count: int | None = None,
 ) -> list[object]:
-    """Đẩy filter (fileType/analysisSessionId) và order_by+limit xuống PostgreSQL
+    """Đẩy filter (fileType/analysisSessionId) và order_by+limit xuống Firestore
     thay vì tải toàn bộ collection rồi lọc bằng Python."""
     base_query = repo.uploaded_files().where("uid", "==", user.uid)
     if file_type:

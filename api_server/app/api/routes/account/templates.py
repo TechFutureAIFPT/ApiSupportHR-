@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.api.pagination import CursorPageResponse, decode_cursor, parse_field_selection
 from app.api.response_utils import cached_json_response
 from app.api.deps import get_current_user
-from app.repositories.postgres.page_repository import paginate_owner_records
+from app.repositories.firestore.page_repository import paginate_owner_records
 from app.schemas.account import AuthenticatedUser, UserJDTemplateCreateRequest, UserJDTemplateUpdateRequest
 from app.services.account import response_cache_service, template_service
 from app.core.config import get_settings

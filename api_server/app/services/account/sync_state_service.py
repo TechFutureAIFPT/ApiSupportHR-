@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Literal
 
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 
 

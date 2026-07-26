@@ -7,7 +7,7 @@ This directory contains a Kustomize base plus local and production overlays.
 - `supporthr-api`: stateless FastAPI pods behind a ClusterIP Service.
 - `supporthr-worker`: separate durable-analysis workers consuming the Redis queue.
 - Redis: local overlay only. Production should use a managed, highly available Redis service.
-- Supabase/PostgreSQL remains the default before migration reconciliation. After cutover, Supabase Auth/PostgreSQL is the system of record; Redis still holds queue payloads, short-lived job state, cache and distributed limits.
+- Firebase/Firestore remains the default before migration reconciliation. After cutover, Firebase Authentication/Firestore is the system of record; Redis still holds queue payloads, short-lived job state, cache and distributed limits.
 
 ## Build the image
 
@@ -58,7 +58,7 @@ kubectl top pods -n supporthr-local
 1. Push an immutable image tag and replace `replace-with-release-tag` in the production overlay.
 2. Create `supporthr-backend-secrets` from the real secret manager. Never commit the completed secret YAML.
 3. Configure a managed Redis URL in `REDIS_INTERNAL_URL`.
-4. For Supabase cutover, set `SUPABASE_URL`, pooled `DATABASE_URL`, `DATA_ENCRYPTION_KEY`, then change both provider flags only after reconciliation.
+4. Set `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON`, and `DATA_ENCRYPTION_KEY`, then verify `/health/ready` reports Firebase before routing production traffic.
 5. Install Metrics Server so the resource-based HPAs receive CPU/memory metrics.
 6. Copy and customize `ingress.example.yaml`, then add it to the production `kustomization.yaml` only after DNS, TLS and ingress class are known.
 7. Apply and wait for both rollouts.

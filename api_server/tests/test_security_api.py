@@ -5,7 +5,6 @@ import unittest
 from fastapi.testclient import TestClient
 
 from app.main import api_app
-from app.integrations import postgres
 from app.services import security_service
 
 
@@ -13,13 +12,10 @@ class SecurityApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(api_app)
         self.original_redis_increment = security_service.redis_cache.increment
-        self.original_postgres_ready = postgres.postgres_ready
-        postgres.postgres_ready = lambda: True  # type: ignore[assignment]
         security_service._fallback_windows.clear()
 
     def tearDown(self) -> None:
         security_service.redis_cache.increment = self.original_redis_increment  # type: ignore[assignment]
-        postgres.postgres_ready = self.original_postgres_ready  # type: ignore[assignment]
         security_service._fallback_windows.clear()
         api_app.dependency_overrides.clear()
         self.client.close()

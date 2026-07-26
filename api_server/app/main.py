@@ -57,9 +57,6 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        from app.integrations.postgres import close_postgres_pool
-
-        close_postgres_pool()
         redis_cache.close_redis_client()
 
 
@@ -169,11 +166,11 @@ def _readiness_payload() -> dict[str, object]:
     redis_ready = redis_cache.ping() if redis_required else None
     if redis_required and not redis_ready:
         raise HTTPException(status_code=503, detail="Redis analysis queue is not ready")
-    from app.integrations.postgres import postgres_pool_stats, postgres_ready
+    from app.integrations.firebase_admin import firestore_ready
 
-    postgres_is_ready = postgres_ready()
-    if not postgres_is_ready:
-        raise HTTPException(status_code=503, detail="Supabase PostgreSQL is not ready")
+    firestore_is_ready = firestore_ready()
+    if not firestore_is_ready:
+        raise HTTPException(status_code=503, detail="Firebase Firestore is not ready")
     return {
         "status": "ok",
         "classifier": {
@@ -186,9 +183,8 @@ def _readiness_payload() -> dict[str, object]:
             "redisReady": redis_ready,
         },
         "data": {
-            "provider": "supabase",
-            "postgresReady": postgres_is_ready,
-            "pool": postgres_pool_stats(),
+            "provider": "firebase",
+            "firestoreReady": firestore_is_ready,
         },
     }
 
@@ -214,7 +210,10 @@ app = CORSMiddleware(
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}):(8081|8090|19006)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "If-None-Match", "If-Match"],
+    allow_headers=[
+        "Authorization", "Content-Type", "If-None-Match", "If-Match",
+        "X-Firebase-AppCheck",
+    ],
     expose_headers=[
         "ETag", "X-Data-Revision", "X-Generated-At", "X-Cache-Status",
         "X-Process-Time-Ms", "Server-Timing",

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Any
 
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.shared import optimized_docs
 
@@ -40,7 +40,7 @@ def _cleanup(collection_ref: Any, user: AuthenticatedUser, keep_count: int = MAX
         else:
             for document_id in stale_ids:
                 collection_ref.document(document_id).delete()
-    except Exception as error:  # pragma: no cover - Supabase availability depends on runtime config
+    except Exception as error:  # pragma: no cover - Firestore availability depends on runtime config
         print(f"[Persistence] Cleanup skipped: {error}")
 
 
@@ -56,7 +56,7 @@ def _create(
         doc_ref.set({**_base_payload(user, artifact_type), **payload})
         _cleanup(collection_ref, user)
         return doc_ref.id
-    except Exception as error:  # pragma: no cover - Supabase availability depends on runtime config
+    except Exception as error:  # pragma: no cover - Firestore availability depends on runtime config
         print(f"[Persistence] Save skipped for {artifact_type}: {error}")
         return None
 

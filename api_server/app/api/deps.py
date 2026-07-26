@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from fastapi import Header, HTTPException, Request, status
 
-from app.integrations.supabase_access import verify_access_token
+from app.integrations.auth_provider import verify_access_token
 from app.schemas.account import AuthenticatedUser
+from app.services.security_service import verify_app_check_if_required
 
 
 def _cached_user_from_request(request: Request) -> AuthenticatedUser | None:
@@ -27,6 +28,7 @@ def _persist_user_on_request(request: Request, user: AuthenticatedUser) -> None:
 
 
 async def get_current_user(request: Request, authorization: str | None = Header(default=None)) -> AuthenticatedUser:
+    verify_app_check_if_required(request)
     cached = _cached_user_from_request(request)
     if cached is not None and cached.uid:
         return cached
@@ -40,10 +42,10 @@ async def get_current_user(request: Request, authorization: str | None = Header(
 
     try:
         decoded = verify_access_token(token)
-    except Exception as error:  # pragma: no cover - depends on Supabase runtime
+    except Exception as error:  # pragma: no cover - depends on Firebase runtime
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Không thể xác thực Supabase token: {error}",
+            detail=f"Không thể xác thực Firebase token: {error}",
         ) from error
 
     user = AuthenticatedUser(
@@ -60,6 +62,7 @@ async def get_optional_current_user(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> AuthenticatedUser | None:
+    verify_app_check_if_required(request)
     cached = _cached_user_from_request(request)
     if cached is not None:
         return cached

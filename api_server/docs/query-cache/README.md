@@ -2,7 +2,7 @@
 
 ## Storage and ownership
 
-Completed candidate results are stored in PostgreSQL collection `syncedAnalysisCache`. Document IDs remain
+Completed candidate results are stored in Cloud Firestore collection `syncedAnalysisCache`. Document IDs remain
 `{uid}_{cacheKey}`, so entries are isolated by authenticated user. Entries expire after 30 days and each user
 keeps at most 50.
 

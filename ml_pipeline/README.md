@@ -164,5 +164,5 @@ python ml_pipeline/seed_exemplars.py \
   --confirm-reviewed
 ```
 
-Apply the Supabase pgvector migration and HNSW cosine index before enabling native nearest-neighbor retrieval.
-The seed command writes directly to `public.approved_exemplars` through `DATABASE_URL`.
+Apply the Firestore vector index before enabling native nearest-neighbor retrieval.
+The seed command writes directly to `public.approved_exemplars` through `FIREBASE_SERVICE_ACCOUNT_JSON`.

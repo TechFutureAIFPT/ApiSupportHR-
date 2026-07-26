@@ -75,7 +75,7 @@ nano /opt/supporthr/shared/supporthr-secret.env
 bash /tmp/supporthr-vps/prepare-k3s-secrets.sh
 ```
 
-Điền Supabase, Gemini và Google OAuth thật. Không gửi nội dung file này qua chat hoặc commit lên Git.
+Điền Firebase, Gemini và Google OAuth thật. Không gửi nội dung file này qua chat hoặc commit lên Git.
 
 Script sẽ hỏi:
 

@@ -8,8 +8,8 @@ import unicodedata
 from typing import Any
 
 from app.core.ai_contract import EXEMPLAR_SCHEMA_VERSION, is_current_vector_contract
-from app.repositories.postgres import account_repository as repo
-from app.repositories.postgres import vector_repository as vector_repo
+from app.repositories.firestore import account_repository as repo
+from app.repositories.firestore import vector_repository as vector_repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account.history_service import fetch_recent_history
 from app.services.gemini_service import embed_text

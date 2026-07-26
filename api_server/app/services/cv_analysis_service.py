@@ -313,7 +313,7 @@ async def get_rag_exemplars(
 ) -> list[dict[str, Any]]:
     """Fetch approved few-shot exemplars with strict metadata filters and a similarity gate.
 
-    This function is intentionally defensive: any Supabase, schema, or vector issue returns
+    This function is intentionally defensive: any Firestore, schema, or vector issue returns
     an empty list so the caller can continue with the normal zero-shot scoring flow.
     """
     industry = str(predicted_industry or "").strip()
@@ -325,8 +325,8 @@ async def get_rag_exemplars(
     settings = get_settings()
     collection_name = settings.approved_exemplars_collection or "approvedExemplars"
 
-    def _query_supabase() -> list[dict[str, Any]]:
-        from app.repositories.postgres import account_repository as account_repo
+    def _query_firestore() -> list[dict[str, Any]]:
+        from app.repositories.firestore import account_repository as account_repo
 
         query = (
             account_repo.db().collection(collection_name)
@@ -337,9 +337,9 @@ async def get_rag_exemplars(
         return [snapshot.to_dict() or {} for snapshot in query.stream()]
 
     try:
-        records = await asyncio.to_thread(_query_supabase)
+        records = await asyncio.to_thread(_query_firestore)
     except Exception as error:  # pragma: no cover - runtime fallback path
-        print(f"[RAG Exemplars] Supabase query failed: {error}")
+        print(f"[RAG Exemplars] Firestore query failed: {error}")
         return []
 
     gated: list[dict[str, Any]] = []

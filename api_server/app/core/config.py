@@ -47,33 +47,19 @@ class Settings:
 
         self.app_name = os.getenv("APP_NAME", "SupportHR Backend")
         self.maintenance_mode = os.getenv("MAINTENANCE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
-        self.database_url = os.getenv("DATABASE_URL", "").strip()
-        # This service uses psycopg directly rather than SQLAlchemy. These are the
-        # equivalent bounded-pool controls for every API/worker process.
-        self.postgres_pool_min_size = _int_env("POSTGRES_POOL_MIN_SIZE", 1, 0, 20)
-        self.postgres_pool_max_size = _int_env("POSTGRES_POOL_MAX_SIZE", 15, 1, 100)
-        if self.postgres_pool_min_size > self.postgres_pool_max_size:
-            self.postgres_pool_min_size = self.postgres_pool_max_size
-        self.postgres_pool_max_waiting = _int_env("POSTGRES_POOL_MAX_WAITING", 60, 1, 10000)
-        self.postgres_pool_timeout_seconds = _float_env("POSTGRES_POOL_TIMEOUT_SECONDS", 5.0)
-        self.postgres_pool_max_idle_seconds = _float_env("POSTGRES_POOL_MAX_IDLE_SECONDS", 300.0)
-        self.postgres_pool_max_lifetime_seconds = _float_env("POSTGRES_POOL_MAX_LIFETIME_SECONDS", 1800.0)
-        self.postgres_pool_reconnect_timeout_seconds = _float_env("POSTGRES_POOL_RECONNECT_TIMEOUT_SECONDS", 60.0)
-        self.postgres_pool_workers = _int_env("POSTGRES_POOL_WORKERS", 3, 1, 10)
-        self.postgres_statement_timeout_ms = _int_env("POSTGRES_STATEMENT_TIMEOUT_MS", 15000, 1000, 120000)
-        self.postgres_idle_transaction_timeout_ms = _int_env(
-            "POSTGRES_IDLE_TRANSACTION_TIMEOUT_MS", 10000, 1000, 120000
-        )
-        self.supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-        self.supabase_jwt_audience = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated").strip() or "authenticated"
-        self.supabase_jwt_issuer = (
-            os.getenv("SUPABASE_JWT_ISSUER", "").strip()
-            or (f"{self.supabase_url}/auth/v1" if self.supabase_url else "")
-        )
-        self.supabase_jwks_url = (
-            os.getenv("SUPABASE_JWKS_URL", "").strip()
-            or (f"{self.supabase_url}/auth/v1/.well-known/jwks.json" if self.supabase_url else "")
-        )
+        self.firebase_project_id = os.getenv("FIREBASE_PROJECT_ID", "").strip()
+        self.firebase_client_email = os.getenv("FIREBASE_CLIENT_EMAIL", "").strip()
+        self.firebase_private_key = os.getenv("FIREBASE_PRIVATE_KEY", "")
+        self.firebase_service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+        self.firebase_web_api_key = os.getenv("FIREBASE_WEB_API_KEY", "").strip()
+        self.firebase_auth_domain = os.getenv("FIREBASE_AUTH_DOMAIN", "").strip()
+        self.firebase_database_url = os.getenv("FIREBASE_DATABASE_URL", "").strip()
+        self.firebase_storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET", "").strip()
+        self.firebase_messaging_sender_id = os.getenv("FIREBASE_MESSAGING_SENDER_ID", "").strip()
+        self.firebase_app_id = os.getenv("FIREBASE_APP_ID", "").strip()
+        self.firebase_measurement_id = os.getenv("FIREBASE_MEASUREMENT_ID", "").strip()
+        self.firebase_appcheck_site_key = os.getenv("FIREBASE_APPCHECK_SITE_KEY", "").strip()
+        self.firebase_appcheck_enforce = _bool_env("FIREBASE_APPCHECK_ENFORCE", False)
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://www.supporthr-tf.com.vn")
         self.gemini_default_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.gemini_cv_analysis_model = (

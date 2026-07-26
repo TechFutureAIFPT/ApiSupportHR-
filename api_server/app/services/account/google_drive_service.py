@@ -10,7 +10,7 @@ from urllib import error, parse, request
 from urllib.parse import urlparse
 
 from app.core.config import get_settings
-from app.repositories.postgres import account_repository as repo
+from app.repositories.firestore import account_repository as repo
 from app.schemas.account import AuthenticatedUser
 from app.services.account import uploaded_file_service
 from app.services.account.shared import serialize
