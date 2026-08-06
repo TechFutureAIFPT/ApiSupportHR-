@@ -29,6 +29,7 @@ GOOGLE_DRIVE_SCOPES = [
     "email",
     "profile",
     "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
 ]
 GOOGLE_WORKSPACE_EXPORTS = {
     "application/vnd.google-apps.document": (
@@ -397,6 +398,15 @@ def _get_valid_connection(user: AuthenticatedUser) -> dict[str, Any]:
     if access_token and expires_at > now + GOOGLE_TOKEN_REFRESH_SKEW_MS:
         return connection
     return _refresh_access_token(user, connection)
+
+
+def get_valid_access_token(user: AuthenticatedUser) -> str:
+    """Return a current server-side Google token without exposing it to the browser."""
+    connection = _get_valid_connection(user)
+    token = str(connection.get("accessToken") or "")
+    if not token:
+        raise GoogleDriveValidationError("Kết nối Google chưa có access token hợp lệ.")
+    return token
 
 
 def _auth_headers(access_token: str) -> dict[str, str]:

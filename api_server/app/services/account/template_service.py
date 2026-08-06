@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from app.repositories.firestore import account_repository as repo
@@ -35,6 +36,7 @@ def get_user_templates(user: AuthenticatedUser, limit_count: int = 100) -> list[
 
 def create_template(user: AuthenticatedUser, payload: dict[str, Any]) -> dict[str, Any]:
     doc_ref = repo.create_document(repo.jd_templates())
+    response_timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
     stored_payload = {
             "uid": user.uid,
             "name": str(payload.get("name") or ""),
@@ -47,7 +49,15 @@ def create_template(user: AuthenticatedUser, payload: dict[str, Any]) -> dict[st
         }
     doc_ref.set(stored_payload)
     view_sync_service.refresh_user_views(user, "template", rebuild_mobile_inbox=False)
-    return {"id": doc_ref.id, **serialize(stored_payload)}
+    # Firestore's SERVER_TIMESTAMP sentinel is valid for writes but is not JSON
+    # serializable. Return a stable millisecond value while Firestore resolves
+    # the authoritative server timestamps in the stored document.
+    response_payload = {
+        **stored_payload,
+        "createdAt": response_timestamp,
+        "updatedAt": response_timestamp,
+    }
+    return {"id": doc_ref.id, **serialize(response_payload)}
 
 
 def update_template(user: AuthenticatedUser, template_id: str, updates: dict[str, Any]) -> bool:

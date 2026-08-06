@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_user
 from app.schemas.account import AuthenticatedUser
 from app.services.account.email_service import GmailSendError, send_bulk
+from app.services.account import google_drive_service
+from app.api.routes.account.google_drive import raise_google_drive_http_error
 
 
 router = APIRouter()
@@ -40,15 +42,16 @@ def send_emails(
     x_google_access_token: str | None = Header(default=None),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    if not x_google_access_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Thiếu Google OAuth token. Vui lòng đăng nhập lại.",
-        )
+    google_access_token = x_google_access_token
+    if not google_access_token:
+        try:
+            google_access_token = google_drive_service.get_valid_access_token(current_user)
+        except Exception as error:
+            raise_google_drive_http_error(error)
 
     try:
         raw_results = send_bulk(
-            google_access_token=x_google_access_token,
+            google_access_token=google_access_token,
             emails=[item.model_dump() for item in payload.emails],
         )
     except GmailSendError as exc:

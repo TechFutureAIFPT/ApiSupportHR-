@@ -153,13 +153,43 @@ def touch_file(user: AuthenticatedUser, file_id: str) -> bool:
     return True
 
 
+def _aggregation_value(result: object) -> int:
+    try:
+        rows = list(result or [])  # type: ignore[arg-type]
+        if not rows:
+            return 0
+        first_row = rows[0]
+        values = list(first_row) if not isinstance(first_row, (str, bytes)) else []
+        if not values:
+            return 0
+        return int(float(getattr(values[0], "value", 0) or 0))
+    except (TypeError, ValueError, IndexError):
+        return 0
+
+
+def _count_query(query: object) -> int:
+    try:
+        return _aggregation_value(query.count().get())  # type: ignore[attr-defined]
+    except Exception:
+        return sum(1 for _ in query.stream())  # type: ignore[attr-defined]
+
+
+def _sum_query(query: object, field_name: str) -> int:
+    try:
+        return _aggregation_value(query.sum(field_name).get())  # type: ignore[attr-defined]
+    except Exception:
+        return sum(
+            int((doc.to_dict() or {}).get(field_name) or 0)
+            for doc in query.stream()  # type: ignore[attr-defined]
+        )
+
+
 def get_file_stats(user: AuthenticatedUser) -> dict[str, object]:
     base_query = repo.uploaded_files().where("uid", "==", user.uid)
-    grouped = base_query.group_count("fileType")
-    total_files = sum(grouped.values())
-    total_cvs = int(grouped.get("cv", 0))
-    total_jds = int(grouped.get("jd", 0))
-    total_size = int(base_query.sum("fileSize").get()[0][0].value or 0)
+    total_files = _count_query(base_query)
+    total_cvs = _count_query(base_query.where("fileType", "==", "cv"))
+    total_jds = _count_query(base_query.where("fileType", "==", "jd"))
+    total_size = _sum_query(base_query, "fileSize")
     return {
         "totalFiles": total_files,
         "totalCVs": total_cvs,

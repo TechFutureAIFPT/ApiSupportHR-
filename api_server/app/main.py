@@ -212,7 +212,7 @@ app = CORSMiddleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[
         "Authorization", "Content-Type", "If-None-Match", "If-Match",
-        "X-Firebase-AppCheck",
+        "X-Firebase-AppCheck", "X-Request-Id",
     ],
     expose_headers=[
         "ETag", "X-Data-Revision", "X-Generated-At", "X-Cache-Status",
