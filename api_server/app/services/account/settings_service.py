@@ -62,6 +62,8 @@ def _normalize_fixed_jd(value: Any) -> dict[str, Any] | None:
         "jdText": str(fixed_jd.get("jdText") or "").strip(),
         "savedAt": _millis(fixed_jd.get("savedAt"), _now_millis()),
         "scoringEnabled": _bool(fixed_jd.get("scoringEnabled"), False),
+        "roleKey": str(fixed_jd.get("roleKey") or ""),
+        "rubricVersion": str(fixed_jd.get("rubricVersion") or ""),
         "weights": deepcopy(_record(fixed_jd.get("weights"))) if isinstance(fixed_jd.get("weights"), dict) else None,
         "hardFilters": deepcopy(_record(fixed_jd.get("hardFilters"))) if isinstance(fixed_jd.get("hardFilters"), dict) else None,
     }
@@ -87,6 +89,7 @@ def default_user_settings(user: AuthenticatedUser) -> dict[str, Any]:
             "restoreDraft": True,
             "rememberScoringConfig": True,
             "autoSaveHistory": True,
+            "ocrByDefault": False,
             "autoFillHardFiltersOnContinue": False,
             "newSessionMode": "reset",
         },
@@ -141,6 +144,7 @@ def normalize_user_settings(raw: Any, user: AuthenticatedUser) -> dict[str, Any]
             "restoreDraft": _bool(workflow.get("restoreDraft"), defaults["workflow"]["restoreDraft"]),
             "rememberScoringConfig": _bool(workflow.get("rememberScoringConfig"), defaults["workflow"]["rememberScoringConfig"]),
             "autoSaveHistory": _bool(workflow.get("autoSaveHistory"), defaults["workflow"]["autoSaveHistory"]),
+            "ocrByDefault": _bool(workflow.get("ocrByDefault"), defaults["workflow"]["ocrByDefault"]),
             "autoFillHardFiltersOnContinue": _bool(
                 workflow.get("autoFillHardFiltersOnContinue"),
                 defaults["workflow"]["autoFillHardFiltersOnContinue"],

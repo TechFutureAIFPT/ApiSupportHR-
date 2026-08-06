@@ -148,6 +148,7 @@ class SettingsApiTests(unittest.TestCase):
             json={
                 "workflow": {
                     "newSessionMode": "keep-config",
+                    "ocrByDefault": True,
                     "autoFillHardFiltersOnContinue": True,
                     "fixedJD": {
                         "enabled": True,
@@ -155,6 +156,8 @@ class SettingsApiTests(unittest.TestCase):
                         "jdText": "Python, FastAPI, PostgreSQL",
                         "savedAt": 1782466563564,
                         "scoringEnabled": True,
+                        "roleKey": "backend_developer",
+                        "rubricVersion": "2026.07",
                         "weights": {
                             "jdFit": {
                                 "children": [
@@ -174,11 +177,14 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["workflow"]["newSessionMode"], "keep-config")
+        self.assertTrue(payload["workflow"]["ocrByDefault"])
         self.assertTrue(payload["workflow"]["autoFillHardFiltersOnContinue"])
         self.assertEqual(payload["workflow"]["fixedJD"]["name"], "Backend Developer")
         self.assertEqual(payload["workflow"]["fixedJD"]["jdText"], "Python, FastAPI, PostgreSQL")
         self.assertTrue(payload["workflow"]["fixedJD"]["enabled"])
         self.assertTrue(payload["workflow"]["fixedJD"]["scoringEnabled"])
+        self.assertEqual(payload["workflow"]["fixedJD"]["roleKey"], "backend_developer")
+        self.assertEqual(payload["workflow"]["fixedJD"]["rubricVersion"], "2026.07")
         self.assertEqual(payload["workflow"]["fixedJD"]["weights"]["jdFit"]["children"][0]["weight"], 20)
         self.assertEqual(payload["workflow"]["fixedJD"]["hardFilters"]["location"], "Hà Nội")
 
