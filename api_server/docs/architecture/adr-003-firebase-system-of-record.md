@@ -18,7 +18,7 @@ Accepted, 2026-07-26.
 - Production needs `FIREBASE_PROJECT_ID` and a valid Admin credential (`FIREBASE_SERVICE_ACCOUNT_JSON`, credential path, or Application Default Credentials).
 - `/health/ready` must report `provider=firebase` and `firestoreReady=true`.
 - Firebase authorized domains must contain every production web host used for Google sign-in.
-- Firestore rules and indexes are versioned under `Software/Project-Rules/firebase`.
+- Firestore rules and indexes are versioned under `Software/Web/Rules/firebase`.
 
 ## Provider removal
 

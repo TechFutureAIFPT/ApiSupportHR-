@@ -7,7 +7,7 @@ Firebase Authentication and Cloud Firestore are the SupportHR source of truth.
 - User-owned documents contain a `uid` field matching the Firebase Auth UID.
 - Profile and realtime state documents use the UID as their document ID where practical.
 - Backend routes always derive ownership from the verified Firebase ID token.
-- Direct mobile access is limited by `Project-Rules/firebase/firestore.rules`.
+- Direct mobile access is limited by `Web/Rules/firebase/firestore.rules`.
 - Firebase Admin access is trusted and therefore must enforce ownership in repositories and services.
 
 ## Main collections

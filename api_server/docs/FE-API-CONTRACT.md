@@ -133,6 +133,7 @@ export async function apiFetch<T>(
   accessToken?: string | null
 ): Promise<T> {
   const headers = new Headers(init.headers);
+  headers.set("X-Request-Id", crypto.randomUUID());
 
   if (!(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -155,6 +156,8 @@ export async function apiFetch<T>(
   return payload as T;
 }
 ```
+
+Backend CORS phải cho phép `X-Request-Id` vì API client dùng header này để truy vết request. Với local FE tại `http://localhost:3000`, preflight có `Access-Control-Request-Headers: x-request-id` phải trả `200`.
 
 ## 5. Chuẩn auth
 
@@ -462,7 +465,7 @@ Tất cả endpoint trong phần này bắt buộc Bearer token.
 | POST | `/api/account/notifications/{notification_id}/read` | Đánh dấu đã đọc |
 | POST | `/api/account/notifications/read-all` | Đánh dấu tất cả |
 | GET | `/api/account/mobile-inbox` | Payload inbox cho mobile |
-| POST | `/api/account/email/send` | Gửi email bằng Google OAuth token |
+| POST | `/api/account/email/send` | Gửi email bằng Google OAuth connection lưu phía Backend; FE không truyền Google access token |
 
 ## 10. Request mẫu quan trọng
 

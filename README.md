@@ -93,7 +93,7 @@ Web/BE/
 │  ├─ Dockerfile
 │  └─ requirements.txt
 ├─ ml_pipeline/            Pipeline dữ liệu/huấn luyện chạy offline
-├─ Project-Rules/firebase/ Firestore rules và indexes (workspace shared)
+├─ Web/Rules/firebase/     Firestore rules và indexes (Web-owned, Android-consumed)
 ├─ deploy/kubernetes/      Base + local/OCI/production overlays
 ├─ deploy/vps/             Bootstrap, deploy, health và rollback
 ├─ docker-compose.yml      Local: API + Redis + worker
